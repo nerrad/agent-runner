@@ -26,7 +26,7 @@ export function buildJobPaths(config: RuntimeConfig, jobId: string): JobPaths {
       finalResponsePath: path.join(artifactDir, 'final-response.json'),
       schemaPath: path.join(artifactDir, 'result-schema.json'),
       promptPath: path.join(artifactDir, 'prompt.txt'),
+      specBundlePath: path.join(artifactDir, 'spec'),
     },
   };
 }
-

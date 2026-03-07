@@ -29,7 +29,7 @@ const jobRecord: JobRecord = {
   updatedAt: new Date().toISOString(),
   spec: {
     repoUrl: 'git@github.com:owner/repo.git',
-    planPath: 'docs/plan.md',
+    specPath: 'agent-os/specs/example',
     agentRuntime: 'claude',
     githubHost: 'github.com',
     commitOnStop: true,
@@ -43,6 +43,12 @@ const jobRecord: JobRecord = {
     finalResponsePath: '/tmp/agent-runner/artifacts/job-123/final-response.json',
     schemaPath: '/tmp/agent-runner/artifacts/job-123/result-schema.json',
     promptPath: '/tmp/agent-runner/artifacts/job-123/prompt.txt',
+    specBundlePath: '/tmp/agent-runner/artifacts/job-123/spec',
+  },
+  resolvedSpec: {
+    specMode: 'bundle',
+    specEntryPath: '/spec/plan.md',
+    specFiles: [ '/spec/plan.md', '/spec/shape.md' ],
   },
 };
 
@@ -59,6 +65,7 @@ test('docker runner mounts local claude/codex state into the worker home', () =>
   assert.match(commandString, /src=\/Users\/dethier\/\.claude,dst=\/root\/\.claude/);
   assert.match(commandString, /src=\/Users\/dethier\/\.claude\.json,dst=\/root\/\.claude\.json/);
   assert.match(commandString, /src=\/Users\/dethier\/\.codex,dst=\/root\/\.codex/);
+  assert.match(commandString, /src=\/tmp\/agent-runner\/artifacts\/job-123\/spec,dst=\/spec,readonly/);
   assert.match(commandString, /HOME=\/root/);
   assert.match(commandString, /GH_CONFIG_DIR=\/gh-config/);
   assert.match(commandString, /SSH_AUTH_SOCK=\/tmp\/agent-runner-ssh\.sock/);

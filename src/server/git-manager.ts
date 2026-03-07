@@ -4,6 +4,30 @@ import { ensureDir } from './fs-utils.js';
 import { runCommand } from './process-utils.js';
 
 export class GitManager {
+  async getRepoRoot(targetPath: string): Promise<string> {
+    const result = await runCommand('git', [ '-C', targetPath, 'rev-parse', '--show-toplevel' ]);
+    if (result.exitCode !== 0) {
+      throw new Error(result.stderr || `Not a git repository: ${targetPath}`);
+    }
+    return result.stdout.trim();
+  }
+
+  async getOriginUrl(targetPath: string): Promise<string> {
+    const result = await runCommand('git', [ '-C', targetPath, 'config', '--get', 'remote.origin.url' ]);
+    if (result.exitCode !== 0 || !result.stdout.trim()) {
+      throw new Error(`Missing remote.origin.url for ${targetPath}`);
+    }
+    return result.stdout.trim();
+  }
+
+  async getCurrentBranch(targetPath: string): Promise<string> {
+    const result = await runCommand('git', [ '-C', targetPath, 'rev-parse', '--abbrev-ref', 'HEAD' ]);
+    if (result.exitCode !== 0 || !result.stdout.trim()) {
+      throw new Error(`Failed to resolve current branch for ${targetPath}`);
+    }
+    return result.stdout.trim();
+  }
+
   async cloneRepository(repoUrl: string, workspacePath: string, ref?: string): Promise<void> {
     await ensureDir(workspacePath);
 
@@ -83,4 +107,3 @@ export class GitManager {
     await appendFile(targetPath, lines.join('\n'), 'utf8');
   }
 }
-

@@ -1,12 +1,14 @@
 import { createServer as createViteServer } from 'vite';
 import { loadRuntimeConfig } from './config.js';
 import { createApp } from './app.js';
+import { createRuntime } from './runtime.js';
 
 const port = Number.parseInt(process.env.PORT ?? '4317', 10);
 
 async function main(): Promise<void> {
   const config = await loadRuntimeConfig();
-  const { app } = createApp(config);
+  const runtime = createRuntime(config);
+  const { app } = createApp(runtime);
   const vite = await createViteServer({
     server: { middlewareMode: true },
     appType: 'custom',

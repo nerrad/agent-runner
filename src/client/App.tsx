@@ -5,7 +5,7 @@ import type { JobRecord, JobSpec } from '../shared/types.js';
 const INITIAL_FORM: JobSpec = {
   repoUrl: '',
   ref: '',
-  planPath: '',
+  specPath: '',
   agentRuntime: 'claude',
   githubHost: 'github.com',
   commitOnStop: true,
@@ -157,7 +157,7 @@ export function App(): ReactElement {
         <section className="panel form-panel">
           <div className="panel-header">
             <h2>New Job</h2>
-            <p>Submit a repo and plan file. The worker will clone fresh and run until complete or blocked.</p>
+            <p>Submit a repo and spec path. Agent OS spec directories are preferred; single-file plans still work.</p>
           </div>
           <form className="job-form" onSubmit={(event) => void handleSubmit(event)}>
             <label>
@@ -178,11 +178,11 @@ export function App(): ReactElement {
               />
             </label>
             <label>
-              Plan path
+              Spec path
               <input
-                value={form.planPath}
-                onChange={(event) => setForm((current) => ({ ...current, planPath: event.target.value }))}
-                placeholder="docs/plan.md"
+                value={form.specPath}
+                onChange={(event) => setForm((current) => ({ ...current, specPath: event.target.value }))}
+                placeholder="agent-os/specs/feature-x"
                 required
               />
             </label>
@@ -233,7 +233,7 @@ export function App(): ReactElement {
                   <span className="runtime-pill">{job.spec.agentRuntime}</span>
                 </div>
                 <strong>{job.spec.repoUrl}</strong>
-                <span>{job.spec.planPath}</span>
+                <span>{job.spec.specPath}</span>
                 <span className="job-meta">{job.branchName}</span>
               </button>
             ))}
@@ -269,6 +269,14 @@ export function App(): ReactElement {
                     <div>
                       <dt>HEAD</dt>
                       <dd>{selectedJob.headSha ?? 'pending'}</dd>
+                    </div>
+                    <div>
+                      <dt>Spec path</dt>
+                      <dd>{selectedJob.spec.specPath}</dd>
+                    </div>
+                    <div>
+                      <dt>Resolved spec</dt>
+                      <dd>{selectedJob.resolvedSpec ? `${selectedJob.resolvedSpec.specMode}: ${selectedJob.resolvedSpec.specFiles.join(', ')}` : 'Pending'}</dd>
                     </div>
                     <div>
                       <dt>Workspace</dt>

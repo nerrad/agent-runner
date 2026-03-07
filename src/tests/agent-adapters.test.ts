@@ -17,7 +17,7 @@ async function createJobRecord(agentRuntime: 'claude' | 'codex'): Promise<JobRec
     updatedAt: new Date().toISOString(),
     spec: {
       repoUrl: 'git@github.com:owner/repo.git',
-      planPath: 'docs/plan.md',
+      specPath: 'agent-os/specs/example',
       agentRuntime,
       githubHost: 'github.com',
       commitOnStop: true,
@@ -31,6 +31,12 @@ async function createJobRecord(agentRuntime: 'claude' | 'codex'): Promise<JobRec
       finalResponsePath: path.join(tempDir, 'final-response.json'),
       schemaPath: path.join(tempDir, 'result-schema.json'),
       promptPath: path.join(tempDir, 'prompt.txt'),
+      specBundlePath: path.join(tempDir, 'spec'),
+    },
+    resolvedSpec: {
+      specMode: 'bundle',
+      specEntryPath: '/spec/plan.md',
+      specFiles: [ '/spec/plan.md', '/spec/shape.md' ],
     },
   };
 }
@@ -47,7 +53,8 @@ test('prepare codex run writes prompt/schema and uses exec mode', async () => {
 
   const prompt = await readFile(job.artifacts.promptPath, 'utf8');
   const schema = await readFile(job.artifacts.schemaPath, 'utf8');
-  assert.match(prompt, /Follow the plan file exactly/);
+  assert.match(prompt, /Start with \/spec\/plan\.md/);
+  assert.match(prompt, /Read \/spec\/shape\.md/);
   assert.match(schema, /"completed"/);
 });
 

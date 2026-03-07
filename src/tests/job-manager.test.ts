@@ -17,6 +17,9 @@ class MockGitManager {
   async cloneRepository(_repoUrl: string, workspacePath: string): Promise<void> {
     await mkdir(workspacePath, { recursive: true });
     await writeFile(path.join(workspacePath, '.gitkeep'), '', 'utf8');
+    await mkdir(path.join(workspacePath, 'agent-os', 'specs', 'example'), { recursive: true });
+    await writeFile(path.join(workspacePath, 'agent-os', 'specs', 'example', 'plan.md'), '# Plan\n', 'utf8');
+    await writeFile(path.join(workspacePath, 'agent-os', 'specs', 'example', 'shape.md'), '# Shape\n', 'utf8');
   }
 
   async createBranch(): Promise<void> {}
@@ -118,13 +121,15 @@ test('job manager processes a job through completion and writes commit metadata'
   const events = new JobEvents();
   const git = new MockGitManager();
   const docker = new MockDockerRunner();
-  const manager = new JobManager(config, store, events, git as never, docker as never, new AgentAdapters());
+  const manager = new JobManager(config, store, events, git as never, docker as never, new AgentAdapters(), {
+    runMode: 'inline',
+  });
 
   process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
 
   const job = await manager.createJob({
     repoUrl: 'git@github.com:owner/repo.git',
-    planPath: 'docs/plan.md',
+    specPath: 'agent-os/specs/example',
     agentRuntime: 'claude',
     githubHost: 'github.com',
     commitOnStop: true,
@@ -136,6 +141,8 @@ test('job manager processes a job through completion and writes commit metadata'
   assert.equal(finished.containerId, 'container-123');
   assert.match(finished.debugCommand ?? '', /docker exec -it container-123 bash/);
   assert.equal(finished.headSha, 'abc123');
+  assert.equal(finished.resolvedSpec?.specMode, 'bundle');
+  assert.deepEqual(finished.resolvedSpec?.specFiles, [ '/spec/plan.md', '/spec/shape.md' ]);
 });
 
 test('cancelJob stops the active container and keeps canceled state', async () => {
@@ -145,13 +152,15 @@ test('cancelJob stops the active container and keeps canceled state', async () =
   const events = new JobEvents();
   const git = new MockGitManager();
   const docker = new BlockingDockerRunner();
-  const manager = new JobManager(config, store, events, git as never, docker as never, new AgentAdapters());
+  const manager = new JobManager(config, store, events, git as never, docker as never, new AgentAdapters(), {
+    runMode: 'inline',
+  });
 
   process.env.OPENAI_API_KEY = 'test-openai-key';
 
   const job = await manager.createJob({
     repoUrl: 'git@github.com:owner/repo.git',
-    planPath: 'docs/plan.md',
+    specPath: 'agent-os/specs/example',
     agentRuntime: 'codex',
     githubHost: 'github.com',
     commitOnStop: true,

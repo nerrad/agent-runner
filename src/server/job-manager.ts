@@ -1,21 +1,37 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, copyFile, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, open, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { AgentResult, JobRecord, JobSpec } from '../shared/types.js';
+import type { AgentResult, JobRecord, JobSpec, JobStatus } from '../shared/types.js';
 import { AgentResultSchema, JobSpecSchema } from '../shared/types.js';
 import type { RuntimeConfig } from './config.js';
 import { createGitHostProfile } from './config.js';
 import type { DockerRunner } from './docker-runner.js';
+import { ensureDir, safeRemove, writeJsonAtomic } from './fs-utils.js';
 import type { GitManager } from './git-manager.js';
 import { JobEvents } from './job-events.js';
-import { JobStore } from './job-store.js';
-import { ensureDir, safeRemove, writeJsonAtomic } from './fs-utils.js';
+import { launchDetachedJobRunner } from './job-launcher.js';
 import { buildJobPaths } from './paths.js';
 import { AgentAdapters } from './agent-adapters.js';
+import { runCommand } from './process-utils.js';
+import { stageSpecBundle } from './spec-resolver.js';
+import { JobStore } from './job-store.js';
+
+const TERMINAL_STATUSES = new Set<JobStatus>([ 'blocked', 'completed', 'failed', 'canceled' ]);
+
+export interface JobManagerOptions {
+  runMode?: 'inline' | 'process';
+  launchJobRunner?: (jobId: string) => Promise<void>;
+}
+
+interface JobLockPayload {
+  jobId: string;
+  pid: number;
+}
 
 export class JobManager {
-  private readonly queue: string[] = [];
-  private activeJobId: string | null = null;
+  private readonly activeLockPath: string;
+  private readonly runMode: 'inline' | 'process';
+  private readonly launchJobRunner: (jobId: string) => Promise<void>;
 
   constructor(
     private readonly config: RuntimeConfig,
@@ -24,7 +40,12 @@ export class JobManager {
     private readonly git: GitManager,
     private readonly docker: DockerRunner,
     private readonly adapters: AgentAdapters,
-  ) {}
+    options: JobManagerOptions = {},
+  ) {
+    this.activeLockPath = path.join(this.config.appDir, 'active-job.lock');
+    this.runMode = options.runMode ?? 'process';
+    this.launchJobRunner = options.launchJobRunner ?? ((jobId) => launchDetachedJobRunner(this.config, jobId));
+  }
 
   async createJob(input: JobSpec): Promise<JobRecord> {
     const spec = JobSpecSchema.parse(input);
@@ -50,8 +71,13 @@ export class JobManager {
 
     await this.store.save(record);
     this.events.emitRecord(record);
-    this.queue.push(id);
-    void this.processQueue();
+
+    if (this.runMode === 'inline') {
+      void this.runJob(record.id);
+    } else {
+      await this.launchJobRunner(record.id);
+    }
+
     return record;
   }
 
@@ -73,12 +99,15 @@ export class JobManager {
       await this.docker.stopJob(record.containerId);
     }
 
-    const canceled = await this.updateRecord(record, {
+    if (TERMINAL_STATUSES.has(record.status)) {
+      return record;
+    }
+
+    return await this.updateRecord(record, {
       status: 'canceled',
       endedAt: new Date().toISOString(),
       blockerReason: 'Canceled by user',
     });
-    return canceled;
   }
 
   async readLog(jobId: string): Promise<string> {
@@ -94,19 +123,22 @@ export class JobManager {
     }
   }
 
-  private async processQueue(): Promise<void> {
-    if (this.activeJobId || this.queue.length === 0) {
+  async runJob(jobId: string): Promise<void> {
+    const lock = await this.acquireJobSlot(jobId);
+    if (!lock) {
       return;
     }
 
-    const jobId = this.queue.shift()!;
-    this.activeJobId = jobId;
-
     try {
-      await this.runJob(jobId);
+      const record = await this.requireJob(jobId);
+      if (TERMINAL_STATUSES.has(record.status)) {
+        return;
+      }
+
+      await this.executeJob(jobId);
     } catch (error) {
       const record = await this.store.get(jobId);
-      if (record) {
+      if (record && !TERMINAL_STATUSES.has(record.status)) {
         await this.updateRecord(record, {
           status: 'failed',
           endedAt: new Date().toISOString(),
@@ -114,12 +146,11 @@ export class JobManager {
         });
       }
     } finally {
-      this.activeJobId = null;
-      void this.processQueue();
+      await this.releaseJobSlot(lock);
     }
   }
 
-  private async runJob(jobId: string): Promise<void> {
+  private async executeJob(jobId: string): Promise<void> {
     let record = await this.requireJob(jobId);
     const profile = createGitHostProfile(this.config, record.spec.githubHost);
     const runtimeEnvKeys = this.adapters.runtimeEnvKeys(record.spec.agentRuntime);
@@ -154,6 +185,11 @@ export class JobManager {
 
     record = await this.updateRecord(record, {
       status: 'bootstrapping',
+    });
+
+    const stagedSpec = await stageSpecBundle(record.workspacePath, record.spec.specPath, record.artifacts.specBundlePath);
+    record = await this.updateRecord(record, {
+      resolvedSpec: stagedSpec.resolvedSpec,
     });
 
     const prepared = await this.adapters.prepare(record);
@@ -203,37 +239,41 @@ export class JobManager {
     }
 
     const changedFiles = await this.git.getChangedFiles(record.workspacePath);
-    if (changedFiles.length > 0) {
+    if (changedFiles.length > 0 && record.spec.commitOnStop) {
       await this.git.commitAll(record.workspacePath, `chore(agent-runner): snapshot ${record.id}`);
     }
 
     const headSha = await this.git.getHeadSha(record.workspacePath);
-    await this.writeArtifacts(record, changedFiles, agentResult);
+    record = await this.updateRecord(record, {
+      headSha,
+    });
+    await this.writeArtifacts(record, changedFiles, agentResult, stagedSpec.sourcePath);
 
     if (dockerResult.exitCode !== 0 && !agentResult) {
-      record = await this.updateRecord(record, {
+      await this.updateRecord(record, {
         status: 'failed',
-        headSha,
         endedAt: new Date().toISOString(),
         blockerReason: `Worker exited with code ${dockerResult.exitCode}`,
       });
       return;
     }
 
-    record = await this.updateRecord(record, {
+    await this.updateRecord(record, {
       status: agentResult?.status ?? 'failed',
       blockerReason: agentResult?.blockerReason,
-      headSha,
       endedAt: new Date().toISOString(),
     });
   }
 
-  private async writeArtifacts(record: JobRecord, changedFiles: string[], agentResult: AgentResult | null): Promise<void> {
+  private async writeArtifacts(
+    record: JobRecord,
+    changedFiles: string[],
+    agentResult: AgentResult | null,
+    sourceSpecPath: string,
+  ): Promise<void> {
     let diffContent = '';
     try {
-      diffContent = await import('./process-utils.js').then(({ runCommand }) =>
-        runCommand('git', [ '-C', record.workspacePath, 'diff', 'HEAD~1..HEAD' ])
-      ).then((result) => result.stdout);
+      diffContent = (await runCommand('git', [ '-C', record.workspacePath, 'diff', 'HEAD~1..HEAD' ])).stdout;
     } catch {
       diffContent = '';
     }
@@ -249,7 +289,82 @@ export class JobManager {
       finishedAt: new Date().toISOString(),
       debugCommand: record.debugCommand,
       workspacePath: record.workspacePath,
+      specPath: record.spec.specPath,
+      sourceSpecPath,
+      resolvedSpec: record.resolvedSpec,
     });
+  }
+
+  private async acquireJobSlot(jobId: string): Promise<JobLockPayload | null> {
+    for (;;) {
+      const record = await this.requireJob(jobId);
+      if (TERMINAL_STATUSES.has(record.status)) {
+        return null;
+      }
+
+      try {
+        const handle = await open(this.activeLockPath, 'wx');
+        const payload: JobLockPayload = { jobId, pid: process.pid };
+        await handle.writeFile(JSON.stringify(payload));
+        await handle.close();
+        return payload;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+          throw error;
+        }
+      }
+
+      if (await this.clearStaleLock()) {
+        continue;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+
+  private async clearStaleLock(): Promise<boolean> {
+    let payload: JobLockPayload | null = null;
+    try {
+      const raw = await readFile(this.activeLockPath, 'utf8');
+      payload = JSON.parse(raw) as JobLockPayload;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return true;
+      }
+      payload = null;
+    }
+
+    if (!payload?.pid || this.isProcessAlive(payload.pid)) {
+      return false;
+    }
+
+    await safeRemove(this.activeLockPath);
+    return true;
+  }
+
+  private isProcessAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      return code !== 'ESRCH';
+    }
+  }
+
+  private async releaseJobSlot(lock: JobLockPayload): Promise<void> {
+    try {
+      const raw = await readFile(this.activeLockPath, 'utf8');
+      const current = JSON.parse(raw) as JobLockPayload;
+      if (current.jobId !== lock.jobId || current.pid !== lock.pid) {
+        return;
+      }
+      await unlink(this.activeLockPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+    }
   }
 
   private async requireJob(jobId: string): Promise<JobRecord> {

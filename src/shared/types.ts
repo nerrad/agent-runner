@@ -21,13 +21,21 @@ export type JobStatus = z.infer<typeof JobStatusSchema>;
 export const JobSpecSchema = z.object({
   repoUrl: z.string().min(1),
   ref: z.string().min(1).optional(),
-  planPath: z.string().min(1),
+  specPath: z.string().min(1),
   agentRuntime: AgentRuntimeSchema,
   githubHost: GitHubHostSchema,
   commitOnStop: z.literal(true).default(true),
   wpEnvEnabled: z.literal(true).default(true),
 });
 export type JobSpec = z.infer<typeof JobSpecSchema>;
+
+export const ResolvedSpecSchema = z.object({
+  specMode: z.enum([ 'bundle', 'file' ]),
+  specEntryPath: z.string().min(1),
+  specFiles: z.array(z.string().min(1)).min(1),
+  visualsDir: z.string().min(1).optional(),
+});
+export type ResolvedSpec = z.infer<typeof ResolvedSpecSchema>;
 
 export const GitHostProfileSchema = z.object({
   host: GitHubHostSchema,
@@ -46,6 +54,7 @@ export const ArtifactBundleSchema = z.object({
   finalResponsePath: z.string().min(1),
   schemaPath: z.string().min(1),
   promptPath: z.string().min(1),
+  specBundlePath: z.string().min(1),
 });
 export type ArtifactBundle = z.infer<typeof ArtifactBundleSchema>;
 
@@ -63,6 +72,7 @@ export const JobRecordSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   artifacts: ArtifactBundleSchema,
+  resolvedSpec: ResolvedSpecSchema.optional(),
   debugCommand: z.string().optional(),
 });
 export type JobRecord = z.infer<typeof JobRecordSchema>;
@@ -87,4 +97,3 @@ export const JobEventSchema = z.object({
   log: JobLogEventSchema.optional(),
 });
 export type JobEvent = z.infer<typeof JobEventSchema>;
-

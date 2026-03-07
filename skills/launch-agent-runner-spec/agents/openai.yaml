@@ -1,0 +1,4 @@
+version: 1
+display_name: Launch agent-runner spec
+short_description: Launch agent-runner from an existing Claude or Agent OS spec bundle.
+default_prompt: Launch agent-runner for this repository using an existing spec bundle or plan file.

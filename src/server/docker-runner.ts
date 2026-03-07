@@ -76,6 +76,8 @@ export class DockerRunner {
       '--mount',
       `type=bind,src=${path.dirname(request.job.artifacts.logPath)},dst=/artifacts`,
       '--mount',
+      `type=bind,src=${request.job.artifacts.specBundlePath},dst=/spec,readonly`,
+      '--mount',
       `type=bind,src=${this.config.dockerSocketPath},dst=/var/run/docker.sock`,
       '--mount',
       `type=bind,src=${this.config.ghConfigDir},dst=${ghMountTarget},readonly`,

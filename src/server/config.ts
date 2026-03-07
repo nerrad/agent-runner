@@ -1,8 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
-import { stat } from 'node:fs/promises';
 import type { GitHostProfile, GitHubHost } from '../shared/types.js';
-import { ensureDir } from './fs-utils.js';
+import { ensureDir, pathExists } from './fs-utils.js';
 
 export interface RuntimeConfig {
   appDir: string;
@@ -18,18 +17,6 @@ export interface RuntimeConfig {
   a8cProxyUrl: string;
   workerImageTag: string;
   sourceRoot: string;
-}
-
-async function pathExists(targetPath: string): Promise<boolean> {
-  try {
-    await stat(targetPath);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return false;
-    }
-    throw error;
-  }
 }
 
 export async function resolveDockerSocketPath(): Promise<string> {

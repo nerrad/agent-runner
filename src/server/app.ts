@@ -1,29 +1,15 @@
 import express from 'express';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
-import type { RuntimeConfig } from './config.js';
-import { JobEvents } from './job-events.js';
-import { JobStore } from './job-store.js';
-import { GitManager } from './git-manager.js';
-import { DockerRunner } from './docker-runner.js';
-import { AgentAdapters } from './agent-adapters.js';
-import { JobManager } from './job-manager.js';
 import { JobSpecSchema } from '../shared/types.js';
+import type { RuntimeContext } from './runtime.js';
 
 export interface AppContext {
   app: express.Express;
-  manager: JobManager;
-  events: JobEvents;
 }
 
-export function createApp(config: RuntimeConfig): AppContext {
+export function createApp(runtime: RuntimeContext): AppContext {
   const app = express();
-  const events = new JobEvents();
-  const store = new JobStore(config);
-  const git = new GitManager();
-  const docker = new DockerRunner(config);
-  const adapters = new AgentAdapters();
-  const manager = new JobManager(config, store, events, git, docker, adapters);
 
   app.use(express.json());
 
@@ -33,7 +19,7 @@ export function createApp(config: RuntimeConfig): AppContext {
 
   app.get('/api/jobs', async (_request, response, next) => {
     try {
-      response.json(await manager.listJobs());
+      response.json(await runtime.manager.listJobs());
     } catch (error) {
       next(error);
     }
@@ -42,7 +28,7 @@ export function createApp(config: RuntimeConfig): AppContext {
   app.post('/api/jobs', async (request, response, next) => {
     try {
       const spec = JobSpecSchema.parse(request.body);
-      const record = await manager.createJob(spec);
+      const record = await runtime.manager.createJob(spec);
       response.status(201).json(record);
     } catch (error) {
       next(error);
@@ -51,7 +37,7 @@ export function createApp(config: RuntimeConfig): AppContext {
 
   app.get('/api/jobs/:jobId', async (request, response, next) => {
     try {
-      const record = await manager.getJob(request.params.jobId);
+      const record = await runtime.manager.getJob(request.params.jobId);
       if (!record) {
         response.status(404).json({ error: 'Job not found' });
         return;
@@ -64,7 +50,7 @@ export function createApp(config: RuntimeConfig): AppContext {
 
   app.post('/api/jobs/:jobId/cancel', async (request, response, next) => {
     try {
-      const record = await manager.cancelJob(request.params.jobId);
+      const record = await runtime.manager.cancelJob(request.params.jobId);
       if (!record) {
         response.status(404).json({ error: 'Job not found' });
         return;
@@ -79,8 +65,14 @@ export function createApp(config: RuntimeConfig): AppContext {
     try {
       const wantsStream = request.query.follow === '1' || request.get('accept')?.includes('text/event-stream');
       if (!wantsStream) {
-        const log = await manager.readLog(request.params.jobId);
+        const log = await runtime.manager.readLog(request.params.jobId);
         response.type('text/plain').send(log);
+        return;
+      }
+
+      const record = await runtime.manager.getJob(request.params.jobId);
+      if (!record) {
+        response.status(404).json({ error: 'Job not found' });
         return;
       }
 
@@ -88,17 +80,37 @@ export function createApp(config: RuntimeConfig): AppContext {
       response.setHeader('Cache-Control', 'no-cache');
       response.setHeader('Connection', 'keep-alive');
 
-      const existing = await manager.readLog(request.params.jobId);
-      if (existing) {
-        response.write(`data: ${JSON.stringify({ type: 'bootstrap', chunk: existing })}\n\n`);
+      let sentLength = 0;
+      const bootstrap = await runtime.manager.readLog(request.params.jobId);
+      if (bootstrap) {
+        sentLength = bootstrap.length;
+        response.write(`data: ${JSON.stringify({ type: 'bootstrap', chunk: bootstrap })}\n\n`);
       }
 
-      const unsubscribe = events.subscribe(request.params.jobId, (event) => {
-        response.write(`data: ${JSON.stringify(event)}\n\n`);
+      const interval = windowedLogFollower(async () => {
+        const nextRecord = await runtime.manager.getJob(request.params.jobId);
+        if (!nextRecord) {
+          response.end();
+          return true;
+        }
+
+        const content = await runtime.manager.readLog(request.params.jobId);
+        if (content.length > sentLength) {
+          const chunk = content.slice(sentLength);
+          sentLength = content.length;
+          response.write(`data: ${JSON.stringify({ type: 'log', log: { chunk } })}\n\n`);
+        }
+
+        if ([ 'blocked', 'completed', 'failed', 'canceled' ].includes(nextRecord.status) && content.length === sentLength) {
+          response.end();
+          return true;
+        }
+
+        return false;
       });
 
       request.on('close', () => {
-        unsubscribe();
+        interval();
         response.end();
       });
     } catch (error) {
@@ -106,14 +118,26 @@ export function createApp(config: RuntimeConfig): AppContext {
     }
   });
 
-  app.use('/artifacts', express.static(config.artifactsDir));
+  app.use('/artifacts', express.static(runtime.config.artifactsDir));
 
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
     const message = error instanceof Error ? error.message : 'Unknown error';
     response.status(500).json({ error: message });
   });
 
-  return { app, manager, events };
+  return { app };
+}
+
+function windowedLogFollower(tick: () => Promise<boolean>): () => void {
+  const timer = setInterval(() => {
+    void tick().then((done) => {
+      if (done) {
+        clearInterval(timer);
+      }
+    });
+  }, 500);
+
+  return () => clearInterval(timer);
 }
 
 export async function serveClient(app: express.Express, clientRoot: string): Promise<void> {
@@ -123,4 +147,3 @@ export async function serveClient(app: express.Express, clientRoot: string): Pro
     response.type('html').send(html);
   });
 }
-
