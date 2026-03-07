@@ -76,9 +76,16 @@ Prompt contract:
 - work until complete or hard blocked
 - return JSON only, matching the staged schema
 
-## Required environment
+## Authentication
 
-Local login state is the primary auth path for Claude Code and Codex. If you also export API keys, agent-runner passes them through as fallback:
+Local login state is the primary auth path for Claude Code and Codex.
+
+- Claude jobs use the mounted host `~/.claude` and `~/.claude.json`
+- Codex jobs use the mounted host `~/.codex`
+- If present, `ANTHROPIC_API_KEY` is passed through only for Claude jobs
+- If present, `OPENAI_API_KEY` is passed through only for Codex jobs
+
+API keys are optional fallback auth, not required when local login state is already valid:
 
 ```bash
 export ANTHROPIC_API_KEY=...
