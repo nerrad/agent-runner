@@ -1,0 +1,37 @@
+{
+  "name": "agent-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local autonomous agent worker for Claude Code and Codex.",
+  "scripts": {
+    "dev": "tsx watch src/server/dev-server.ts",
+    "build": "vite build && tsc -p tsconfig.server.json",
+    "start": "node dist/server/server.js",
+    "test": "tsx --test src/tests/**/*.test.ts",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "smoke:docker": "tsx src/tests/smoke-docker.ts",
+    "smoke:wp-env": "tsx src/tests/smoke-wp-env.ts"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.1"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "packageManager": "pnpm@10.30.1"
+}
