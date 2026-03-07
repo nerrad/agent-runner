@@ -1,23 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import type { JobRecord } from '../shared/types.js';
 import type { RuntimeConfig } from '../server/config.js';
 import { DockerRunner } from '../server/docker-runner.js';
+
+const homeDir = '/home/tester';
 
 const runtimeConfig: RuntimeConfig = {
   appDir: '/tmp/agent-runner',
   jobsDir: '/tmp/agent-runner/jobs',
   workspacesDir: '/tmp/agent-runner/workspaces',
   artifactsDir: '/tmp/agent-runner/artifacts',
-  ghConfigDir: '/Users/dethier/.config/gh',
-  claudeDir: '/Users/dethier/.claude',
-  claudeSettingsPath: '/Users/dethier/.claude.json',
-  codexDir: '/Users/dethier/.codex',
-  dockerSocketPath: '/Users/dethier/.orbstack/run/docker.sock',
+  ghConfigDir: path.join(homeDir, '.config', 'gh'),
+  claudeDir: path.join(homeDir, '.claude'),
+  claudeSettingsPath: path.join(homeDir, '.claude.json'),
+  codexDir: path.join(homeDir, '.codex'),
+  dockerSocketPath: path.join(homeDir, '.orbstack', 'run', 'docker.sock'),
   sshAuthSock: '/private/tmp/agent.sock',
-  a8cProxyUrl: 'socks5://host.docker.internal:8080',
+  githubProxyUrl: 'socks5://host.docker.internal:8080',
   workerImageTag: 'agent-runner-worker:latest',
-  sourceRoot: '/Users/dethier/ai/agent-runner',
+  sourceRoot: path.join(homeDir, 'agent-runner'),
 };
 
 const jobRecord: JobRecord = {
@@ -62,9 +65,9 @@ test('docker runner mounts local claude/codex state into the worker home', () =>
   });
 
   const commandString = args.join(' ');
-  assert.match(commandString, /src=\/Users\/dethier\/\.claude,dst=\/root\/\.claude/);
-  assert.match(commandString, /src=\/Users\/dethier\/\.claude\.json,dst=\/root\/\.claude\.json/);
-  assert.match(commandString, /src=\/Users\/dethier\/\.codex,dst=\/root\/\.codex/);
+  assert.match(commandString, /src=\/home\/tester\/\.claude,dst=\/root\/\.claude/);
+  assert.match(commandString, /src=\/home\/tester\/\.claude\.json,dst=\/root\/\.claude\.json/);
+  assert.match(commandString, /src=\/home\/tester\/\.codex,dst=\/root\/\.codex/);
   assert.match(commandString, /src=\/tmp\/agent-runner\/artifacts\/job-123\/spec,dst=\/spec,readonly/);
   assert.match(commandString, /HOME=\/root/);
   assert.match(commandString, /GH_CONFIG_DIR=\/gh-config/);

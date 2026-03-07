@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const AgentRuntimeSchema = z.enum([ 'claude', 'codex' ]);
 export type AgentRuntime = z.infer<typeof AgentRuntimeSchema>;
 
-export const GitHubHostSchema = z.enum([ 'github.com', 'github.a8c.com' ]);
+export const GitHubHostSchema = z.string().min(1);
 export type GitHubHost = z.infer<typeof GitHubHostSchema>;
 
 export const JobStatusSchema = z.enum([

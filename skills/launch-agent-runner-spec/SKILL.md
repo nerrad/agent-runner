@@ -23,7 +23,7 @@ Rules:
 Command pattern:
 
 ```bash
-agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--host <github.com|github.a8c.com>] [--ref <ref>] [--detach]
+agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--host <github-host>] [--ref <ref>] [--detach]
 ```
 
 Behavior notes:

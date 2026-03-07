@@ -18,9 +18,9 @@ function createConfig(root: string): RuntimeConfig {
     codexDir: path.join(root, 'codex'),
     dockerSocketPath: '/tmp/docker.sock',
     sshAuthSock: '/tmp/ssh.sock',
-    a8cProxyUrl: 'socks5://host.docker.internal:8080',
+    githubProxyUrl: 'socks5://host.docker.internal:8080',
     workerImageTag: 'agent-runner-worker:latest',
-    sourceRoot: '/Users/dethier/ai/agent-runner',
+    sourceRoot: path.resolve(new URL('../..', import.meta.url).pathname),
   };
 }
 

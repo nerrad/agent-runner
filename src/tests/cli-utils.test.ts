@@ -12,7 +12,7 @@ test('parseCliArgs handles run and installer commands', () => {
     '--repo', '/tmp/repo',
     '--spec', 'agent-os/specs/example',
     '--runtime', 'claude',
-    '--host', 'github.a8c.com',
+    '--host', 'github.example.com',
     '--detach',
   ]);
 
@@ -21,7 +21,7 @@ test('parseCliArgs handles run and installer commands', () => {
     repo: '/tmp/repo',
     spec: 'agent-os/specs/example',
     runtime: 'claude',
-    host: 'github.a8c.com',
+    host: 'github.example.com',
     ref: undefined,
     detach: true,
   });

@@ -2,6 +2,14 @@
 
 Local autonomous worker for Claude Code and Codex.
 
+## Safety
+
+This tool is designed for trusted local use only.
+
+- It mounts your local Docker socket, SSH agent, GitHub CLI auth, and agent auth state into the worker container
+- It runs the selected agent with high trust inside that container
+- Do not use it with untrusted repositories, untrusted specs, or arbitrary third-party instructions unless you are comfortable granting that level of access
+
 ## What it does
 
 - Runs on `127.0.0.1` only
@@ -85,7 +93,7 @@ export AGENT_RUNNER_GH_CONFIG="$HOME/.config/gh"
 export AGENT_RUNNER_CLAUDE_DIR="$HOME/.claude"
 export AGENT_RUNNER_CLAUDE_SETTINGS="$HOME/.claude.json"
 export AGENT_RUNNER_CODEX_DIR="$HOME/.codex"
-export AGENT_RUNNER_A8C_PROXY_URL="socks5://host.docker.internal:8080"
+export AGENT_RUNNER_GITHUB_PROXY_URL="socks5://host.docker.internal:8080"
 export AGENT_RUNNER_DOCKER_SOCKET="$HOME/.orbstack/run/docker.sock"
 export AGENT_RUNNER_IMAGE="agent-runner-worker:latest"
 ```
@@ -116,7 +124,7 @@ agent-runner run --repo git@github.com:owner/repo.git --spec agent-os/specs/feat
 Available commands:
 
 ```bash
-agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--host <github.com|github.a8c.com>] [--ref <ref>] [--detach]
+agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--host <github-host>] [--ref <ref>] [--detach]
 agent-runner list
 agent-runner show <job-id>
 agent-runner logs <job-id> [--follow]
@@ -138,7 +146,7 @@ The web form accepts the same job inputs:
 - ref
 - spec path
 - runtime
-- GitHub host
+- GitHub host or GitHub Enterprise hostname
 
 Job detail shows:
 
@@ -185,5 +193,5 @@ pnpm smoke:wp-env
 - `gh` commands inside the worker depend on valid host auth in `~/.config/gh`
 - Claude Code usage and auth state flow through the mounted host `~/.claude` and `~/.claude.json`
 - Codex usage and auth state flow through the mounted host `~/.codex`
-- `github.a8c.com` jobs inherit the SOCKS proxy URL from `AGENT_RUNNER_A8C_PROXY_URL`
+- Non-`github.com` hosts can inherit a proxy URL from `AGENT_RUNNER_GITHUB_PROXY_URL`
 - Detached jobs run in a background helper process; one active job is enforced through an app-level lock file

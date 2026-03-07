@@ -14,7 +14,7 @@ export interface RuntimeConfig {
   codexDir: string;
   dockerSocketPath: string;
   sshAuthSock?: string;
-  a8cProxyUrl: string;
+  githubProxyUrl?: string;
   workerImageTag: string;
   sourceRoot: string;
 }
@@ -50,7 +50,7 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
     codexDir: process.env.AGENT_RUNNER_CODEX_DIR ?? path.join(os.homedir(), '.codex'),
     dockerSocketPath: await resolveDockerSocketPath(),
     sshAuthSock: process.env.SSH_AUTH_SOCK,
-    a8cProxyUrl: process.env.AGENT_RUNNER_A8C_PROXY_URL ?? 'socks5://host.docker.internal:8080',
+    githubProxyUrl: process.env.AGENT_RUNNER_GITHUB_PROXY_URL,
     workerImageTag: process.env.AGENT_RUNNER_IMAGE ?? 'agent-runner-worker:latest',
     sourceRoot,
   };
@@ -68,6 +68,6 @@ export function createGitHostProfile(config: RuntimeConfig, host: GitHubHost): G
     host,
     ghConfigMountPath: config.ghConfigDir,
     sshAgentForward: true,
-    proxyUrl: host === 'github.a8c.com' ? config.a8cProxyUrl : undefined,
+    proxyUrl: host !== 'github.com' ? config.githubProxyUrl : undefined,
   };
 }

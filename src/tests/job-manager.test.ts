@@ -93,9 +93,9 @@ function createRuntimeConfig(root: string): RuntimeConfig {
     codexDir: path.join(root, 'codex'),
     dockerSocketPath: '/tmp/docker.sock',
     sshAuthSock: '/tmp/ssh.sock',
-    a8cProxyUrl: 'socks5://host.docker.internal:8080',
+    githubProxyUrl: 'socks5://host.docker.internal:8080',
     workerImageTag: 'agent-runner-worker:latest',
-    sourceRoot: '/Users/dethier/ai/agent-runner',
+    sourceRoot: path.resolve(new URL('../..', import.meta.url).pathname),
   };
 }
 
@@ -112,6 +112,17 @@ async function waitForJob(
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`Timed out waiting for ${statuses.join(', ')}`);
+}
+
+async function waitForJobWithContainer(store: JobStore, jobId: string): Promise<JobRecord> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const record = await store.get(jobId);
+    if (record?.containerId) {
+      return record;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('Timed out waiting for container assignment');
 }
 
 test('job manager processes a job through completion and writes commit metadata', async () => {
@@ -167,7 +178,7 @@ test('cancelJob stops the active container and keeps canceled state', async () =
     wpEnvEnabled: true,
   });
 
-  const running = await waitForJob(store, job.id, [ 'running' ]);
+  const running = await waitForJobWithContainer(store, job.id);
   assert.equal(running.containerId, 'container-blocking');
 
   await manager.cancelJob(job.id);

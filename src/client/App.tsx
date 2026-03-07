@@ -199,13 +199,11 @@ export function App(): ReactElement {
               </label>
               <label>
                 GitHub host
-                <select
+                <input
                   value={form.githubHost}
                   onChange={(event) => setForm((current) => ({ ...current, githubHost: event.target.value as JobSpec['githubHost'] }))}
-                >
-                  <option value="github.com">github.com</option>
-                  <option value="github.a8c.com">github.a8c.com</option>
-                </select>
+                  placeholder="github.com"
+                />
               </label>
             </div>
             {error ? <p className="error-line">{error}</p> : null}

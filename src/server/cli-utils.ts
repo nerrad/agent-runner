@@ -139,7 +139,7 @@ function requireRuntime(value: string): AgentRuntime {
 }
 
 function requireHost(value: string): GitHubHost {
-  if (value === 'github.com' || value === 'github.a8c.com') {
+  if (value.trim()) {
     return value;
   }
   throw new Error(`Unsupported GitHub host: ${value}`);
@@ -272,7 +272,7 @@ export function resolveSkillTargetRoot(target: 'claude' | 'codex'): string {
 export function helpText(): string {
   return [
     'agent-runner commands:',
-    '  agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--host <host>] [--ref <ref>] [--detach]',
+    '  agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--host <github-host>] [--ref <ref>] [--detach]',
     '  agent-runner list',
     '  agent-runner show <job-id>',
     '  agent-runner logs <job-id> [--follow]',
