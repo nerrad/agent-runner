@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx watch src/server/dev-server.ts",
     "build": "vite build && tsc -p tsconfig.server.json",
-    "start": "node dist/server/server.js",
+    "start": "node dist/server/server/server.js",
     "test": "tsx --test src/tests/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "smoke:docker": "tsx src/tests/smoke-docker.ts",

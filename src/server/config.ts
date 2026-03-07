@@ -10,6 +10,9 @@ export interface RuntimeConfig {
   workspacesDir: string;
   artifactsDir: string;
   ghConfigDir: string;
+  claudeDir: string;
+  claudeSettingsPath: string;
+  codexDir: string;
   dockerSocketPath: string;
   sshAuthSock?: string;
   a8cProxyUrl: string;
@@ -55,6 +58,9 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
     workspacesDir: path.join(appDir, 'workspaces'),
     artifactsDir: path.join(appDir, 'artifacts'),
     ghConfigDir: process.env.AGENT_RUNNER_GH_CONFIG ?? path.join(os.homedir(), '.config', 'gh'),
+    claudeDir: process.env.AGENT_RUNNER_CLAUDE_DIR ?? path.join(os.homedir(), '.claude'),
+    claudeSettingsPath: process.env.AGENT_RUNNER_CLAUDE_SETTINGS ?? path.join(os.homedir(), '.claude.json'),
+    codexDir: process.env.AGENT_RUNNER_CODEX_DIR ?? path.join(os.homedir(), '.codex'),
     dockerSocketPath: await resolveDockerSocketPath(),
     sshAuthSock: process.env.SSH_AUTH_SOCK,
     a8cProxyUrl: process.env.AGENT_RUNNER_A8C_PROXY_URL ?? 'socks5://host.docker.internal:8080',
@@ -78,4 +84,3 @@ export function createGitHostProfile(config: RuntimeConfig, host: GitHubHost): G
     proxyUrl: host === 'github.a8c.com' ? config.a8cProxyUrl : undefined,
   };
 }
-

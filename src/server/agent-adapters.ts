@@ -37,7 +37,7 @@ export class AgentAdapters {
     };
   }
 
-  requiredEnv(runtime: AgentRuntime): string[] {
+  runtimeEnvKeys(runtime: AgentRuntime): string[] {
     if (runtime === 'claude') {
       return [ 'ANTHROPIC_API_KEY' ];
     }
@@ -95,4 +95,3 @@ function buildClaudeCommand(outputPath: string): string[] {
     ].join('\n'),
   ];
 }
-

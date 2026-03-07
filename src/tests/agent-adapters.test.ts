@@ -43,7 +43,7 @@ test('prepare codex run writes prompt/schema and uses exec mode', async () => {
   assert.equal(prepared.command[0], 'bash');
   assert.match(prepared.command[2], /codex exec/);
   assert.match(prepared.command[2], /dangerously-bypass-approvals-and-sandbox/);
-  assert.equal(adapters.requiredEnv('codex')[0], 'OPENAI_API_KEY');
+  assert.equal(adapters.runtimeEnvKeys('codex')[0], 'OPENAI_API_KEY');
 
   const prompt = await readFile(job.artifacts.promptPath, 'utf8');
   const schema = await readFile(job.artifacts.schemaPath, 'utf8');
@@ -58,6 +58,5 @@ test('prepare claude run uses print mode with schema', async () => {
 
   assert.match(prepared.command[2], /claude -p/);
   assert.match(prepared.command[2], /--dangerously-skip-permissions/);
-  assert.equal(adapters.requiredEnv('claude')[0], 'ANTHROPIC_API_KEY');
+  assert.equal(adapters.runtimeEnvKeys('claude')[0], 'ANTHROPIC_API_KEY');
 });
-

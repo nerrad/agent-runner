@@ -10,6 +10,9 @@ const runtimeConfig: RuntimeConfig = {
   workspacesDir: '/tmp/agent-runner/workspaces',
   artifactsDir: '/tmp/agent-runner/artifacts',
   ghConfigDir: '/Users/dethier/.config/gh',
+  claudeDir: '/Users/dethier/.claude',
+  claudeSettingsPath: '/Users/dethier/.claude.json',
+  codexDir: '/Users/dethier/.codex',
   dockerSocketPath: '/Users/dethier/.orbstack/run/docker.sock',
   sshAuthSock: '/tmp/ssh.sock',
   a8cProxyUrl: 'socks5://host.docker.internal:8080',
@@ -37,4 +40,3 @@ test('buildJobPaths creates stable artifact layout', () => {
   assert.equal(paths.artifacts.summaryPath, '/tmp/agent-runner/artifacts/job-123/summary.json');
   assert.equal(paths.artifacts.finalResponsePath, '/tmp/agent-runner/artifacts/job-123/final-response.json');
 });
-

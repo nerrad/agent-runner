@@ -32,45 +32,7 @@ export class DockerRunner {
   }
 
   async runJob(request: DockerRunRequest): Promise<{ containerId: string; exitCode: number }> {
-    const containerName = `agent-runner-${request.job.id}`;
-    const sshMountTarget = '/tmp/agent-runner-ssh.sock';
-    const ghMountTarget = '/gh-config';
-
-    const dockerArgs = [
-      'run',
-      '--detach',
-      '--rm',
-      '--name',
-      containerName,
-      '--workdir',
-      '/workspace',
-      '--mount',
-      `type=bind,src=${request.job.workspacePath},dst=/workspace`,
-      '--mount',
-      `type=bind,src=${path.dirname(request.job.artifacts.logPath)},dst=/artifacts`,
-      '--mount',
-      `type=bind,src=${this.config.dockerSocketPath},dst=/var/run/docker.sock`,
-      '--mount',
-      `type=bind,src=${this.config.ghConfigDir},dst=${ghMountTarget},readonly`,
-      '--env',
-      `DOCKER_HOST=unix:///var/run/docker.sock`,
-      '--env',
-      `GH_CONFIG_DIR=${ghMountTarget}`,
-      '--env',
-      `HOME=/tmp/agent-runner-home`,
-    ];
-
-    if (this.config.sshAuthSock) {
-      dockerArgs.push('--mount', `type=bind,src=${this.config.sshAuthSock},dst=${sshMountTarget}`);
-      dockerArgs.push('--env', `SSH_AUTH_SOCK=${sshMountTarget}`);
-    }
-
-    for (const [ key, value ] of Object.entries(request.env)) {
-      dockerArgs.push('--env', `${key}=${value}`);
-    }
-
-    dockerArgs.push(this.config.workerImageTag, ...request.command);
-
+    const dockerArgs = this.buildRunArgs(request);
     const runResult = await runCommand('docker', dockerArgs);
     if (runResult.exitCode !== 0) {
       throw new Error(runResult.stderr || 'Failed to start worker container');
@@ -93,6 +55,55 @@ export class DockerRunner {
 
     const exitCode = Number.parseInt(waitResult.stdout.trim(), 10);
     return { containerId, exitCode: Number.isNaN(exitCode) ? 1 : exitCode };
+  }
+
+  buildRunArgs(request: DockerRunRequest): string[] {
+    const containerName = `agent-runner-${request.job.id}`;
+    const sshMountTarget = '/tmp/agent-runner-ssh.sock';
+    const ghMountTarget = '/gh-config';
+    const containerHome = '/root';
+
+    const dockerArgs = [
+      'run',
+      '--detach',
+      '--rm',
+      '--name',
+      containerName,
+      '--workdir',
+      '/workspace',
+      '--mount',
+      `type=bind,src=${request.job.workspacePath},dst=/workspace`,
+      '--mount',
+      `type=bind,src=${path.dirname(request.job.artifacts.logPath)},dst=/artifacts`,
+      '--mount',
+      `type=bind,src=${this.config.dockerSocketPath},dst=/var/run/docker.sock`,
+      '--mount',
+      `type=bind,src=${this.config.ghConfigDir},dst=${ghMountTarget},readonly`,
+      '--mount',
+      `type=bind,src=${this.config.claudeDir},dst=${containerHome}/.claude`,
+      '--mount',
+      `type=bind,src=${this.config.claudeSettingsPath},dst=${containerHome}/.claude.json`,
+      '--mount',
+      `type=bind,src=${this.config.codexDir},dst=${containerHome}/.codex`,
+      '--env',
+      `DOCKER_HOST=unix:///var/run/docker.sock`,
+      '--env',
+      `GH_CONFIG_DIR=${ghMountTarget}`,
+      '--env',
+      `HOME=${containerHome}`,
+    ];
+
+    if (this.config.sshAuthSock) {
+      dockerArgs.push('--mount', `type=bind,src=${this.config.sshAuthSock},dst=${sshMountTarget}`);
+      dockerArgs.push('--env', `SSH_AUTH_SOCK=${sshMountTarget}`);
+    }
+
+    for (const [ key, value ] of Object.entries(request.env)) {
+      dockerArgs.push('--env', `${key}=${value}`);
+    }
+
+    dockerArgs.push(this.config.workerImageTag, ...request.command);
+    return dockerArgs;
   }
 
   async stopJob(containerId: string): Promise<void> {

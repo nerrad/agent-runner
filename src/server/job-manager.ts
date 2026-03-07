@@ -122,15 +122,14 @@ export class JobManager {
   private async runJob(jobId: string): Promise<void> {
     let record = await this.requireJob(jobId);
     const profile = createGitHostProfile(this.config, record.spec.githubHost);
-    const requiredEnv = this.adapters.requiredEnv(record.spec.agentRuntime);
+    const runtimeEnvKeys = this.adapters.runtimeEnvKeys(record.spec.agentRuntime);
     const runtimeEnv: Record<string, string> = {};
 
-    for (const key of requiredEnv) {
+    for (const key of runtimeEnvKeys) {
       const value = process.env[key];
-      if (!value) {
-        throw new Error(`Missing required environment variable: ${key}`);
+      if (value) {
+        runtimeEnv[key] = value;
       }
-      runtimeEnv[key] = value;
     }
 
     if (profile.proxyUrl) {
