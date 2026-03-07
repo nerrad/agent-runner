@@ -15,6 +15,7 @@
     "test": "tsx --test src/tests/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "smoke:docker": "tsx src/tests/smoke-docker.ts",
+    "smoke:worker": "tsx src/tests/smoke-worker.ts",
     "smoke:wp-env": "tsx src/tests/smoke-wp-env.ts"
   },
   "dependencies": {

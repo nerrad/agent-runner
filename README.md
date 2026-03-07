@@ -22,6 +22,21 @@ This tool is designed for trusted local use only.
 - Forwards the host SSH agent into the worker for git-over-SSH
 - Captures logs, summaries, diffs, the staged spec bundle, and the agent transcript under `~/.agent-runner/artifacts/<job-id>`
 
+## Baseline toolchain in the worker
+
+The worker image ships with these tools available out of the box:
+
+- Node.js 22
+- `npm`
+- `pnpm` via Corepack
+- `python` and `python3`
+- `php`
+- `composer`
+- `git`
+- `docker` CLI
+- `openssh-client`
+- `ripgrep`
+
 ## Spec input
 
 `agent-runner` launches from `--spec`, not just a single plan file.
