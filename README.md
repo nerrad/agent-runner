@@ -108,33 +108,39 @@ Live log behavior:
 
 ## Authentication
 
-Unattended Docker runs should authenticate with host-resolved API keys.
+Unattended Docker runs require real API keys in the environment.
 
-- Claude jobs require `ANTHROPIC_API_KEY` or an automatically retrieved Anthropic API key
-- Codex jobs require `OPENAI_API_KEY` or an automatically retrieved OpenAI API key
-- If no key can be resolved for the selected runtime, the job fails before Docker starts
-- Host `~/.claude`, `~/.claude.json`, and `~/.codex` are still mounted for local config and usage state, but they are not treated as the primary unattended auth contract
+- Claude jobs require `ANTHROPIC_API_KEY`
+- Codex jobs require `OPENAI_API_KEY`
+- If the selected runtime key is missing, the job fails before Docker starts
+- Host `~/.claude`, `~/.claude.json`, and `~/.codex` are still mounted for local config and usage state, but they are not used as an automatic secret source
 
-Direct environment variables are the highest-precedence source:
+Environment resolution order:
+
+- existing process environment
+- repo-root `.env` file, only for keys that are not already set in the process environment
+
+Quick setup:
+
+```bash
+agent-runner init
+```
+
+That command prompts for `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` and writes them to a local `.env` file in the repo root.
+
+Manual setup:
 
 ```bash
 export ANTHROPIC_API_KEY=...
 export OPENAI_API_KEY=...
 ```
 
-If those env vars are absent, agent-runner automatically attempts host-side key retrieval before launching Docker:
-
-- Claude: checks Claude settings for `apiKeyHelper`, then tries common macOS Keychain service names
-- Codex: checks `~/.codex/auth.json` for a real `OPENAI_API_KEY`, then tries common macOS Keychain service names
-
-Optional helper env vars override the built-in lookup when you want a custom command:
+Or create a repo-root `.env` file:
 
 ```bash
-export AGENT_RUNNER_ANTHROPIC_KEY_HELPER='security find-generic-password -a "$USER" -s anthropic-api-key -w'
-export AGENT_RUNNER_OPENAI_KEY_HELPER='security find-generic-password -a "$USER" -s openai-api-key -w'
+ANTHROPIC_API_KEY=...
+OPENAI_API_KEY=...
 ```
-
-Configured helper commands run on the host. They must print only the API key to stdout. Their output is injected into the container as the runtime env var and is not written to job artifacts.
 
 Optional overrides:
 
@@ -195,10 +201,11 @@ agent-runner run --repo git@github.com:owner/repo.git --spec agent-os/specs/feat
 Available commands:
 
 ```bash
+agent-runner init
 agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--host <github-host>] [--ref <ref>] [--detach]
 agent-runner list
 agent-runner show <job-id>
-agent-runner logs <job-id> [--follow]
+agent-runner logs <job-id> [--follow] [--debug]
 agent-runner cancel <job-id>
 agent-runner skills install [--force] [--claude-only] [--codex-only]
 ```
@@ -229,7 +236,14 @@ Job detail shows:
 - requested model and effort
 - resolved spec mode (`bundle` or `file`)
 - detected staged spec files
-- branch, SHA, workspace, debug attach command, and live logs with runner lifecycle markers plus best-effort agent progress lines
+- branch, SHA, workspace, debug attach command, and separate run/debug logs with runner lifecycle markers plus best-effort agent progress lines
+
+Logging notes:
+
+- Claude jobs always write a dedicated `debug.log` artifact via the native Claude `--debug-file` flag
+- The web UI can toggle between the run log and debug log for each job
+- `agent-runner logs <job-id> --debug --follow` tails the debug log from the terminal
+- If Claude or Codex emits an auth failure in the observed logs, agent-runner stops the container and fails the job immediately instead of waiting on a hung session
 
 ## Skills
 
@@ -267,31 +281,31 @@ pnpm smoke:wp-env
 Manual auth validation:
 
 ```bash
-# Claude should fail before container start when no direct env var or usable automatic host key source is available
-env -u ANTHROPIC_API_KEY -u AGENT_RUNNER_ANTHROPIC_KEY_HELPER \
+# Claude should fail before container start when no env key is available
+env -u ANTHROPIC_API_KEY \
   pnpm cli -- run --repo <path-or-url> --spec <path> --runtime claude
 
 # Claude should run when an API key is set directly
 ANTHROPIC_API_KEY=... pnpm cli -- run --repo <path-or-url> --spec <path> --runtime claude
 
-# Claude should also run when ~/.claude/settings.json provides apiKeyHelper
+# Claude should also run when .env contains ANTHROPIC_API_KEY
 pnpm cli -- run --repo <path-or-url> --spec <path> --runtime claude
 
-# Codex should fail before container start when no direct env var or usable automatic host key source is available
-env -u OPENAI_API_KEY -u AGENT_RUNNER_OPENAI_KEY_HELPER \
+# Codex should fail before container start when no env key is available
+env -u OPENAI_API_KEY \
   pnpm cli -- run --repo <path-or-url> --spec <path> --runtime codex
 
 # Codex should run when OPENAI_API_KEY is set directly
 OPENAI_API_KEY=... pnpm cli -- run --repo <path-or-url> --spec <path> --runtime codex
 
-# Codex should also run when ~/.codex/auth.json contains OPENAI_API_KEY
+# Codex should also run when .env contains OPENAI_API_KEY
 pnpm cli -- run --repo <path-or-url> --spec <path> --runtime codex
 ```
 
 ## Notes
 
 - `gh` commands inside the worker depend on valid host auth in `~/.config/gh`
-- Claude Code usage and config state flow through the mounted host `~/.claude` and `~/.claude.json`, but unattended container auth now requires a real API key resolved on the host
-- Codex usage and config state flow through the mounted host `~/.codex`, but unattended container auth now also resolves and injects a real API key before launch; login tokens without a stored `OPENAI_API_KEY` are not enough
+- Claude Code usage and config state flow through the mounted host `~/.claude` and `~/.claude.json`, but unattended container auth now requires `ANTHROPIC_API_KEY` from the process environment or repo-root `.env`
+- Codex usage and config state flow through the mounted host `~/.codex`, but unattended container auth now requires `OPENAI_API_KEY` from the process environment or repo-root `.env`
 - Non-`github.com` hosts can inherit a proxy URL from `AGENT_RUNNER_GITHUB_PROXY_URL`
 - Detached jobs run in a background helper process; one active job is enforced through an app-level lock file

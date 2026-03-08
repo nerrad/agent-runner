@@ -17,6 +17,7 @@ const INITIAL_FORM: JobSpec = {
 export function App(): ReactElement {
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [logKind, setLogKind] = useState<'run' | 'debug'>('run');
   const [logContent, setLogContent] = useState('');
   const [form, setForm] = useState(INITIAL_FORM);
   const [submitting, setSubmitting] = useState(false);
@@ -57,7 +58,7 @@ export function App(): ReactElement {
     };
 
     const refreshLog = async (): Promise<void> => {
-      const response = await fetch(`/api/jobs/${selectedJob.id}/logs`);
+      const response = await fetch(`/api/jobs/${selectedJob.id}/logs?kind=${logKind}`);
       if (!response.ok || closed) {
         return;
       }
@@ -67,7 +68,7 @@ export function App(): ReactElement {
 
     void refreshLog();
 
-    const source = new EventSource(`/api/jobs/${selectedJob.id}/logs?follow=1`);
+    const source = new EventSource(`/api/jobs/${selectedJob.id}/logs?follow=1&kind=${logKind}`);
     source.onmessage = (event) => {
       const payload = JSON.parse(event.data) as {
         type?: string;
@@ -112,7 +113,7 @@ export function App(): ReactElement {
       closed = true;
       source.close();
     };
-  }, [selectedJob?.id]);
+  }, [selectedJob?.id, logKind]);
 
   async function refreshJobs(): Promise<void> {
     const response = await fetch('/api/jobs');
@@ -359,6 +360,7 @@ export function App(): ReactElement {
                       <dd className="artifact-links">
                         <a href={artifactUrl(selectedJob.id, selectedJob.artifacts.summaryPath)} target="_blank" rel="noreferrer">summary</a>
                         <a href={artifactUrl(selectedJob.id, selectedJob.artifacts.gitDiffPath)} target="_blank" rel="noreferrer">git diff</a>
+                        <a href={artifactUrl(selectedJob.id, selectedJob.artifacts.debugLogPath)} target="_blank" rel="noreferrer">debug log</a>
                         <a href={artifactUrl(selectedJob.id, selectedJob.artifacts.agentTranscriptPath)} target="_blank" rel="noreferrer">transcript</a>
                       </dd>
                     </div>
@@ -374,10 +376,28 @@ export function App(): ReactElement {
 
               <div className="log-shell">
                 <div className="log-header">
-                  <span>Live log stream</span>
+                  <div className="log-header-main">
+                    <span>{logKind === 'run' ? 'Run log' : 'Debug log'}</span>
+                    <div className="log-toggle" role="tablist" aria-label="Log type">
+                      <button
+                        type="button"
+                        className={logKind === 'run' ? 'active' : ''}
+                        onClick={() => setLogKind('run')}
+                      >
+                        Run
+                      </button>
+                      <button
+                        type="button"
+                        className={logKind === 'debug' ? 'active' : ''}
+                        onClick={() => setLogKind('debug')}
+                      >
+                        Debug
+                      </button>
+                    </div>
+                  </div>
                   <span>{selectedJob.id}</span>
                 </div>
-                <pre>{logContent || 'Waiting for output...'}</pre>
+                <pre>{logContent || (logKind === 'debug' ? 'Waiting for debug output...' : 'Waiting for output...')}</pre>
               </div>
             </div>
           ) : (

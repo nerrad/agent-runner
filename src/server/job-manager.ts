@@ -13,7 +13,6 @@ import { launchDetachedJobRunner } from './job-launcher.js';
 import { buildJobPaths } from './paths.js';
 import { AgentAdapters } from './agent-adapters.js';
 import { runCommand } from './process-utils.js';
-import { resolveDefaultRuntimeApiKey } from './runtime-key-helper.js';
 import { stageSpecBundle } from './spec-resolver.js';
 import { JobStore } from './job-store.js';
 
@@ -25,6 +24,7 @@ export interface JobManagerOptions {
   runMode?: 'inline' | 'process';
   launchJobRunner?: (jobId: string) => Promise<void>;
   heartbeatIntervalMs?: number;
+  debugPollIntervalMs?: number;
 }
 
 interface JobLockPayload {
@@ -34,12 +34,10 @@ interface JobLockPayload {
 
 interface ResolvedRuntimeAuth {
   env: Record<string, string>;
-  source: 'env' | 'helper' | 'auto-helper';
+  source: 'env';
 }
 
 interface AuthLoopState {
-  authFailureCount: number;
-  meaningfulOutputSeen: boolean;
   abortRequested: boolean;
   blockerReason?: string;
 }
@@ -54,11 +52,18 @@ interface IdleHeartbeat {
   stop(): void;
 }
 
+interface DebugLogFollower {
+  stop(): Promise<void>;
+}
+
+export type JobLogKind = 'run' | 'debug';
+
 export class JobManager {
   private readonly activeLockPath: string;
   private readonly runMode: 'inline' | 'process';
   private readonly launchJobRunner: (jobId: string) => Promise<void>;
   private readonly heartbeatIntervalMs: number;
+  private readonly debugPollIntervalMs: number;
 
   constructor(
     private readonly config: RuntimeConfig,
@@ -73,6 +78,7 @@ export class JobManager {
     this.runMode = options.runMode ?? 'process';
     this.launchJobRunner = options.launchJobRunner ?? ((jobId) => launchDetachedJobRunner(this.config, jobId));
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+    this.debugPollIntervalMs = options.debugPollIntervalMs ?? 500;
   }
 
   async createJob(input: JobSpec): Promise<JobRecord> {
@@ -155,14 +161,14 @@ export class JobManager {
     return canceled;
   }
 
-  async readLog(jobId: string): Promise<string> {
+  async readLog(jobId: string, kind: JobLogKind = 'run'): Promise<string> {
     const record = await this.getJob(jobId);
     if (!record) {
       throw new Error('Job not found');
     }
 
     try {
-      return await readFile(record.artifacts.logPath, 'utf8');
+      return await readFile(kind === 'debug' ? record.artifacts.debugLogPath : record.artifacts.logPath, 'utf8');
     } catch {
       return '';
     }
@@ -210,6 +216,7 @@ export class JobManager {
     }
 
     await writeFile(record.artifacts.logPath, '', 'utf8');
+    await writeFile(record.artifacts.debugLogPath, '', 'utf8');
     await writeFile(record.artifacts.agentTranscriptPath, '', 'utf8');
 
     if (!runtimeAuth.ok) {
@@ -256,10 +263,9 @@ export class JobManager {
     const heartbeat = this.startIdleHeartbeat(logTarget);
 
     const authLoopState: AuthLoopState = {
-      authFailureCount: 0,
-      meaningfulOutputSeen: false,
       abortRequested: false,
     };
+    const debugLogFollower = this.startDebugLogFollower(record, authLoopState);
 
     let dockerResult: { containerId: string; exitCode: number };
     try {
@@ -289,6 +295,7 @@ export class JobManager {
       });
     } finally {
       heartbeat.stop();
+      await debugLogFollower.stop();
     }
 
     const latestRecord = await this.requireJob(record.id);
@@ -390,47 +397,23 @@ export class JobManager {
       };
     }
 
-    const helperCommand = process.env[policy.helperEnvVar]?.trim();
-    if (helperCommand) {
-      const helperValue = await this.runHelperCommand(helperCommand);
-      if (helperValue) {
-        return {
-          ok: true,
-          value: {
-            env: { [ policy.envKey ]: helperValue },
-            source: 'helper',
-          },
-        };
-      }
-    }
-
-    const automaticHelperValue = await resolveDefaultRuntimeApiKey(runtime, this.config);
-    if (automaticHelperValue) {
-      return {
-        ok: true,
-        value: {
-          env: { [ policy.envKey ]: automaticHelperValue },
-          source: 'auto-helper',
-        },
-      };
-    }
-
     return { ok: false, message: policy.missingAuthMessage };
   }
 
-  private async runHelperCommand(helperCommand: string): Promise<string | null> {
-    const helperResult = await runCommand('/bin/sh', [ '-lc', helperCommand ], {
-      env: process.env,
-    });
-    const helperValue = helperResult.stdout.trim();
-    if (helperResult.exitCode === 0 && helperValue) {
-      return helperValue;
-    }
-
-    return null;
+  private async observeRuntimeLog(record: JobRecord, chunk: string, state: AuthLoopState): Promise<void> {
+    await this.observeAuthSignals(record, chunk, state, 'run log');
   }
 
-  private async observeRuntimeLog(record: JobRecord, chunk: string, state: AuthLoopState): Promise<void> {
+  private async observeDebugLog(record: JobRecord, chunk: string, state: AuthLoopState): Promise<void> {
+    await this.observeAuthSignals(record, chunk, state, 'debug log');
+  }
+
+  private async observeAuthSignals(
+    record: JobRecord,
+    chunk: string,
+    state: AuthLoopState,
+    source: 'run log' | 'debug log',
+  ): Promise<void> {
     if (state.abortRequested || state.blockerReason) {
       return;
     }
@@ -444,24 +427,72 @@ export class JobManager {
       }
 
       if (policy.authFailurePatterns.some((pattern) => pattern.test(line))) {
-        state.authFailureCount += 1;
-        continue;
+        state.abortRequested = true;
+        state.blockerReason = policy.authFailureMessage;
+        await this.appendRunnerLogLine(record, `${policy.authFailureMessage} Detected in ${source}.`);
+        if (record.containerId) {
+          await this.docker.stopJob(record.containerId);
+        }
+        return;
+      }
+    }
+  }
+
+  private startDebugLogFollower(record: JobRecord, state: AuthLoopState): DebugLogFollower {
+    let stopped = false;
+    let running = false;
+    let sentLength = 0;
+    let stopResolver: (() => void) | null = null;
+    const stoppedPromise = new Promise<void>((resolve) => {
+      stopResolver = resolve;
+    });
+
+    const timer = setInterval(() => {
+      if (stopped || running) {
+        return;
       }
 
-      state.meaningfulOutputSeen = true;
-    }
+      running = true;
+      void (async () => {
+        try {
+          const latestRecord = await this.store.get(record.id);
+          if (!latestRecord) {
+            stopped = true;
+            return;
+          }
 
-    if (state.meaningfulOutputSeen || state.authFailureCount < 3) {
-      return;
-    }
+          const content = await this.readLog(record.id, 'debug');
+          if (content.length > sentLength) {
+            const chunk = content.slice(sentLength);
+            sentLength = content.length;
+            await this.observeDebugLog(latestRecord, chunk, state);
+          }
 
-    state.abortRequested = true;
-    state.blockerReason = policy.authLoopMessage;
-    await this.appendLogLine(record, policy.authLoopMessage);
+          if (TERMINAL_STATUSES.has(latestRecord.status)) {
+            stopped = true;
+          }
+        } finally {
+          running = false;
+          if (stopped) {
+            clearInterval(timer);
+            stopResolver?.();
+          }
+        }
+      })().catch(() => {
+        stopped = true;
+      });
+    }, this.debugPollIntervalMs);
 
-    if (record.containerId) {
-      await this.docker.stopJob(record.containerId);
-    }
+    return {
+      stop: async () => {
+        stopped = true;
+        clearInterval(timer);
+        if (!running) {
+          stopResolver?.();
+        }
+        await stoppedPromise;
+      },
+    };
   }
 
   private async acquireJobSlot(jobId: string): Promise<JobLockPayload | null> {

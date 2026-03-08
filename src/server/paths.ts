@@ -20,6 +20,7 @@ export function buildJobPaths(config: RuntimeConfig, jobId: string): JobPaths {
     recordPath: path.join(jobDir, 'job.json'),
     artifacts: {
       logPath: path.join(artifactDir, 'run.log'),
+      debugLogPath: path.join(artifactDir, 'debug.log'),
       summaryPath: path.join(artifactDir, 'summary.json'),
       gitDiffPath: path.join(artifactDir, 'git.diff'),
       agentTranscriptPath: path.join(artifactDir, 'agent-transcript.log'),

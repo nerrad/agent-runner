@@ -43,6 +43,7 @@ const jobRecord: JobRecord = {
   },
   artifacts: {
     logPath: '/tmp/agent-runner/artifacts/job-123/run.log',
+    debugLogPath: '/tmp/agent-runner/artifacts/job-123/debug.log',
     summaryPath: '/tmp/agent-runner/artifacts/job-123/summary.json',
     gitDiffPath: '/tmp/agent-runner/artifacts/job-123/git.diff',
     agentTranscriptPath: '/tmp/agent-runner/artifacts/job-123/agent-transcript.log',

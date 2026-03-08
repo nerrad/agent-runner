@@ -2,6 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { GitHostProfile, GitHubHost } from '../shared/types.js';
+import { loadProjectEnv } from './env-file.js';
 import { ensureDir, pathExists } from './fs-utils.js';
 
 export interface RuntimeConfig {
@@ -39,8 +40,9 @@ export async function resolveDockerSocketPath(): Promise<string> {
 }
 
 export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
-  const appDir = process.env.AGENT_RUNNER_HOME ?? path.join(os.homedir(), '.agent-runner');
   const sourceRoot = await resolveSourceRoot(import.meta.url);
+  await loadProjectEnv(sourceRoot);
+  const appDir = process.env.AGENT_RUNNER_HOME ?? path.join(os.homedir(), '.agent-runner');
 
   const config: RuntimeConfig = {
     appDir,

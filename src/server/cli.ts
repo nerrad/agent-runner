@@ -2,6 +2,7 @@
 import process from 'node:process';
 import { loadRuntimeConfig } from './config.js';
 import { parseCliArgs, normalizeRunSpec, formatJobSummary, helpText, defaultSkillTargets, resolveSkillTargetRoot } from './cli-utils.js';
+import { runInit } from './init.js';
 import { createRuntime } from './runtime.js';
 import { installSkills } from './skill-installer.js';
 
@@ -11,6 +12,11 @@ async function main(): Promise<void> {
   const runtime = createRuntime(config, command.command === 'internal-run' ? { runMode: 'inline' } : {});
 
   switch (command.command) {
+    case 'init': {
+      const result = await runInit(config);
+      process.stdout.write(`Saved ${result.savedKeys.length === 0 ? 'no keys' : result.savedKeys.join(', ')} to ${result.envPath}\n`);
+      return;
+    }
     case 'run': {
       const normalized = await normalizeRunSpec(command, runtime.git);
       const record = await runtime.manager.createJob(normalized.jobSpec);
@@ -41,7 +47,7 @@ async function main(): Promise<void> {
       return;
     }
     case 'logs': {
-      await followLogs(runtime.manager, command.jobId, { follow: command.follow });
+      await followLogs(runtime.manager, command.jobId, { follow: command.follow, kind: command.kind });
       return;
     }
     case 'cancel': {
@@ -76,7 +82,7 @@ async function main(): Promise<void> {
 async function followLogs(
   manager: ReturnType<typeof createRuntime>['manager'],
   jobId: string,
-  options: { follow?: boolean } = { follow: true },
+  options: { follow?: boolean; kind?: 'run' | 'debug' } = { follow: true, kind: 'run' },
 ): Promise<void> {
   let printedLength = 0;
 
@@ -86,7 +92,7 @@ async function followLogs(
       throw new Error(`Job not found: ${jobId}`);
     }
 
-    const log = await manager.readLog(jobId);
+    const log = await manager.readLog(jobId, options.kind);
     if (log.length > printedLength) {
       process.stdout.write(log.slice(printedLength));
       printedLength = log.length;

@@ -27,6 +27,7 @@ async function createJobRecord(agentRuntime: 'claude' | 'codex', overrides: Part
     },
     artifacts: {
       logPath: path.join(tempDir, 'run.log'),
+      debugLogPath: path.join(tempDir, 'debug.log'),
       summaryPath: path.join(tempDir, 'summary.json'),
       gitDiffPath: path.join(tempDir, 'git.diff'),
       agentTranscriptPath: path.join(tempDir, 'agent-transcript.log'),
@@ -78,7 +79,22 @@ test('prepare claude run uses print mode with schema', async () => {
   assert.match(prepared.command[2], /--model 'sonnet'/);
   assert.match(prepared.command[2], /--effort 'medium'/);
   assert.match(prepared.command[2], /--dangerously-skip-permissions/);
+  assert.match(prepared.command[2], /--debug-file '\/artifacts\/debug\.log'/);
   assert.equal(adapters.runtimeEnvKeys('claude')[0], 'ANTHROPIC_API_KEY');
+});
+
+test('prepare claude run can enable debug logging through env', async () => {
+  const adapters = new AgentAdapters();
+  const job = await createJobRecord('claude', { model: 'sonnet', effort: 'medium' });
+  process.env.AGENT_RUNNER_CLAUDE_DEBUG = 'api,hooks';
+
+  try {
+    const prepared = await adapters.prepare(job);
+    assert.match(prepared.command[2], /--debug 'api,hooks'/);
+    assert.match(prepared.command[2], /--debug-file '\/artifacts\/debug\.log'/);
+  } finally {
+    delete process.env.AGENT_RUNNER_CLAUDE_DEBUG;
+  }
 });
 
 test('runtime auth policies expose helper commands and auth-loop signatures', () => {
@@ -86,11 +102,34 @@ test('runtime auth policies expose helper commands and auth-loop signatures', ()
   const claude = adapters.runtimeAuthPolicy('claude');
   const codex = adapters.runtimeAuthPolicy('codex');
 
-  assert.equal(claude.helperEnvVar, 'AGENT_RUNNER_ANTHROPIC_KEY_HELPER');
-  assert.equal(codex.helperEnvVar, 'AGENT_RUNNER_OPENAI_KEY_HELPER');
-  assert.match(claude.missingAuthMessage, /automatically retrieved Anthropic API key/);
-  assert.match(codex.missingAuthMessage, /automatically retrieved OpenAI API key/);
+  assert.match(claude.missingAuthMessage, /ANTHROPIC_API_KEY to be set in the host environment/);
+  assert.match(codex.missingAuthMessage, /OPENAI_API_KEY to be set in the host environment/);
+  assert.match(claude.authFailureMessage, /failing the job immediately/i);
+  assert.match(codex.authFailureMessage, /failing the job immediately/i);
   assert.ok(claude.authFailurePatterns.some((pattern) => pattern.test('Please run /login')));
+  assert.ok(claude.authFailurePatterns.some((pattern) => pattern.test('invalid x-api-key')));
   assert.ok(codex.authFailurePatterns.some((pattern) => pattern.test('Please run codex --login')));
   assert.ok(claude.noisePatterns.some((pattern) => pattern.test('Started container abc123')));
+});
+
+test('parseResult extracts structured_output from claude json envelope', async () => {
+  const adapters = new AgentAdapters();
+  const job = await createJobRecord('claude', { model: 'sonnet', effort: 'low' });
+  await import('node:fs/promises').then((fs) => fs.writeFile(job.artifacts.finalResponsePath, JSON.stringify({
+    type: 'result',
+    subtype: 'success',
+    structured_output: {
+      status: 'completed',
+      summary: 'package name is agent-runner',
+      blockerReason: null,
+    },
+  }), 'utf8'));
+
+  const parsed = await adapters.parseResult(job);
+
+  assert.deepEqual(parsed, {
+    status: 'completed',
+    summary: 'package name is agent-runner',
+    blockerReason: null,
+  });
 });

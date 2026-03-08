@@ -16,9 +16,6 @@ import { AgentAdapters } from '../server/agent-adapters.js';
 const AUTH_ENV_KEYS = [
   'ANTHROPIC_API_KEY',
   'OPENAI_API_KEY',
-  'AGENT_RUNNER_ANTHROPIC_KEY_HELPER',
-  'AGENT_RUNNER_OPENAI_KEY_HELPER',
-  'AGENT_RUNNER_DISABLE_KEYCHAIN_LOOKUP',
 ] as const;
 
 class MockGitManager {
@@ -89,6 +86,31 @@ class BlockingDockerRunner extends MockDockerRunner {
     });
     return {
       containerId: 'container-blocking',
+      exitCode: 137,
+    };
+  }
+
+  override async stopJob(containerId: string): Promise<void> {
+    await super.stopJob(containerId);
+    this.pendingResolve?.();
+  }
+}
+
+class DebugAuthDockerRunner extends MockDockerRunner {
+  private pendingResolve: (() => void) | null = null;
+
+  override async runJob(request: DockerRunRequest): Promise<{ containerId: string; exitCode: number }> {
+    this.runCount += 1;
+    this.lastEnv = { ...request.env };
+    await request.onStart?.('container-debug-auth');
+    setTimeout(() => {
+      void writeFile(request.job.artifacts.debugLogPath, '401 authentication_error invalid x-api-key\n', 'utf8');
+    }, 10);
+    await new Promise<void>((resolve) => {
+      this.pendingResolve = resolve;
+    });
+    return {
+      containerId: 'container-debug-auth',
       exitCode: 137,
     };
   }
@@ -293,68 +315,8 @@ test('job manager processes a claude job through completion with direct env auth
   clearAuthEnv();
 });
 
-test('helper auth is used when direct claude env is absent and secrets are not logged', async () => {
-  clearAuthEnv();
-  process.env.AGENT_RUNNER_ANTHROPIC_KEY_HELPER = 'printf helper-anthropic-key';
-
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-helper-'));
-  const docker = new MockDockerRunner();
-  const { manager, store } = createManager(createRuntimeConfig(root), docker);
-
-  const job = await createJob(manager, 'claude');
-  const finished = await waitForJob(store, job.id, [ 'completed' ]);
-  const log = await readFile(finished.artifacts.logPath, 'utf8');
-
-  assert.equal(finished.status, 'completed');
-  assert.equal(docker.lastEnv?.ANTHROPIC_API_KEY, 'helper-anthropic-key');
-  assert.doesNotMatch(log, /helper-anthropic-key/);
-
-  clearAuthEnv();
-});
-
-test('automatic claude helper from claude settings resolves a key when env auth is absent', async () => {
-  clearAuthEnv();
-
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-auto-claude-helper-'));
-  const config = createRuntimeConfig(root);
-  await mkdir(config.claudeDir, { recursive: true });
-  await writeFile(path.join(config.claudeDir, 'settings.json'), JSON.stringify({
-    apiKeyHelper: 'printf auto-claude-key',
-  }), 'utf8');
-
-  const docker = new MockDockerRunner();
-  const { manager, store } = createManager(config, docker);
-
-  const job = await createJob(manager, 'claude');
-  const finished = await waitForJob(store, job.id, [ 'completed' ]);
-  const log = await readFile(finished.artifacts.logPath, 'utf8');
-
-  assert.equal(finished.status, 'completed');
-  assert.equal(docker.lastEnv?.ANTHROPIC_API_KEY, 'auto-claude-key');
-  assert.doesNotMatch(log, /auto-claude-key/);
-});
-
-test('direct env auth takes precedence over a failing helper', async () => {
-  clearAuthEnv();
-  process.env.ANTHROPIC_API_KEY = 'preferred-anthropic-key';
-  process.env.AGENT_RUNNER_ANTHROPIC_KEY_HELPER = 'exit 9';
-
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-helper-precedence-'));
-  const docker = new MockDockerRunner();
-  const { manager, store } = createManager(createRuntimeConfig(root), docker);
-
-  const job = await createJob(manager, 'claude');
-  const finished = await waitForJob(store, job.id, [ 'completed' ]);
-
-  assert.equal(finished.status, 'completed');
-  assert.equal(docker.lastEnv?.ANTHROPIC_API_KEY, 'preferred-anthropic-key');
-
-  clearAuthEnv();
-});
-
 test('claude jobs fail before docker launch when no auth is available', async () => {
   clearAuthEnv();
-  process.env.AGENT_RUNNER_DISABLE_KEYCHAIN_LOOKUP = '1';
 
   const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-no-claude-auth-'));
   const docker = new MockDockerRunner();
@@ -370,49 +332,8 @@ test('claude jobs fail before docker launch when no auth is available', async ()
   assert.match(log, /ANTHROPIC_API_KEY/);
 });
 
-test('claude jobs fail before docker launch when automatic helper returns no usable key', async () => {
-  clearAuthEnv();
-  process.env.AGENT_RUNNER_DISABLE_KEYCHAIN_LOOKUP = '1';
-
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-empty-helper-'));
-  const config = createRuntimeConfig(root);
-  await mkdir(config.claudeDir, { recursive: true });
-  await writeFile(path.join(config.claudeDir, 'settings.json'), JSON.stringify({
-    apiKeyHelper: 'printf ""',
-  }), 'utf8');
-
-  const docker = new MockDockerRunner();
-  const { manager } = createManager(config, docker);
-
-  const job = await createJob(manager, 'claude');
-
-  assert.equal(job.status, 'failed');
-  assert.equal(docker.runCount, 0);
-});
-
-test('codex jobs automatically resolve OPENAI_API_KEY from host auth state when env auth is absent', async () => {
-  clearAuthEnv();
-
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-codex-fallback-'));
-  const config = createRuntimeConfig(root);
-  await mkdir(config.codexDir, { recursive: true });
-  await writeFile(path.join(config.codexDir, 'auth.json'), JSON.stringify({
-    OPENAI_API_KEY: 'codex-auth-file-key',
-  }), 'utf8');
-
-  const docker = new MockDockerRunner();
-  const { manager, store } = createManager(config, docker);
-
-  const job = await createJob(manager, 'codex');
-  const finished = await waitForJob(store, job.id, [ 'completed' ]);
-
-  assert.equal(finished.status, 'completed');
-  assert.equal(docker.lastEnv?.OPENAI_API_KEY, 'codex-auth-file-key');
-});
-
 test('codex jobs fail before docker launch when no key can be automatically resolved', async () => {
   clearAuthEnv();
-  process.env.AGENT_RUNNER_DISABLE_KEYCHAIN_LOOKUP = '1';
 
   const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-no-codex-auth-'));
   const docker = new MockDockerRunner();
@@ -425,50 +346,47 @@ test('codex jobs fail before docker launch when no key can be automatically reso
   assert.equal(docker.runCount, 0);
 });
 
-test('repeated claude auth failures with no meaningful output stop the container and fail the job', async () => {
+test('claude auth failures in the debug log stop the container and fail the job immediately', async () => {
   clearAuthEnv();
   process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
 
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-auth-loop-'));
-  const docker = new ScriptedDockerRunner([
-    'authentication_failed\n',
-    'Please run /login\n',
-    'Not logged in\n',
-  ], null, 137);
-  const { manager, store } = createManager(createRuntimeConfig(root), docker);
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-debug-auth-'));
+  const docker = new DebugAuthDockerRunner();
+  const { manager, store } = createManager(createRuntimeConfig(root), docker, {
+    debugPollIntervalMs: 10,
+  });
 
   const job = await createJob(manager, 'claude');
   const failed = await waitForJob(store, job.id, [ 'failed' ]);
   const log = await readFile(failed.artifacts.logPath, 'utf8');
+  const debugLog = await readFile(failed.artifacts.debugLogPath, 'utf8');
 
-  assert.equal(docker.stoppedContainerId, 'container-scripted');
-  assert.match(failed.blockerReason ?? '', /infinite auth loop/i);
-  assert.match(log, /infinite auth loop/i);
+  assert.equal(docker.stoppedContainerId, 'container-debug-auth');
+  assert.match(failed.blockerReason ?? '', /authentication failed/i);
+  assert.match(log, /Detected in debug log/i);
+  assert.match(debugLog, /invalid x-api-key/i);
 
   clearAuthEnv();
 });
 
-test('auth errors after meaningful output do not trigger the loop abort', async () => {
+test('codex auth errors in the runtime log stop the container immediately', async () => {
   clearAuthEnv();
   process.env.OPENAI_API_KEY = 'test-openai-key';
 
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-auth-noise-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-auth-stop-'));
   const docker = new ScriptedDockerRunner([
-    'Planning change set\n',
     '401 Unauthorized\n',
     'Please run codex --login\n',
-    'OPENAI_API_KEY\n',
-  ], {
-    status: 'completed',
-    summary: 'done',
-  });
+  ], null, 137);
   const { manager, store } = createManager(createRuntimeConfig(root), docker);
 
   const job = await createJob(manager, 'codex');
-  const finished = await waitForJob(store, job.id, [ 'completed' ]);
+  const failed = await waitForJob(store, job.id, [ 'failed' ]);
+  const log = await readFile(failed.artifacts.logPath, 'utf8');
 
-  assert.equal(finished.status, 'completed');
-  assert.equal(docker.stoppedContainerId, null);
+  assert.equal(docker.stoppedContainerId, 'container-scripted');
+  assert.match(failed.blockerReason ?? '', /authentication failed/i);
+  assert.match(log, /Detected in run log/i);
 
   clearAuthEnv();
 });

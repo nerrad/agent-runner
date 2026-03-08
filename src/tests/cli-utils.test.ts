@@ -7,6 +7,17 @@ import { formatJobSummary, normalizeRunSpec, parseCliArgs, resolveSkillTargetRoo
 import { runCommand } from '../server/process-utils.js';
 
 test('parseCliArgs handles run and installer commands', () => {
+  const init = parseCliArgs([ 'init' ]);
+  assert.deepEqual(init, { command: 'init' });
+
+  const logs = parseCliArgs([ 'logs', 'job-123', '--follow', '--debug' ]);
+  assert.deepEqual(logs, {
+    command: 'logs',
+    jobId: 'job-123',
+    follow: true,
+    kind: 'debug',
+  });
+
   const run = parseCliArgs([
     'run',
     '--repo', '/tmp/repo',
@@ -115,6 +126,7 @@ test('formatJobSummary includes blocker reasons when present', () => {
     },
     artifacts: {
       logPath: '/tmp/log',
+      debugLogPath: '/tmp/debug.log',
       summaryPath: '/tmp/summary.json',
       gitDiffPath: '/tmp/git.diff',
       agentTranscriptPath: '/tmp/transcript.log',

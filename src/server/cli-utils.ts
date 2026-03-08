@@ -16,9 +16,10 @@ export type CliCommand =
     ref?: string;
     detach: boolean;
   }
+  | { command: 'init' }
   | { command: 'list' }
   | { command: 'show'; jobId: string }
-  | { command: 'logs'; jobId: string; follow: boolean }
+  | { command: 'logs'; jobId: string; follow: boolean; kind: 'run' | 'debug' }
   | { command: 'cancel'; jobId: string }
   | { command: 'skills-install'; force: boolean; claudeOnly: boolean; codexOnly: boolean }
   | { command: 'internal-run'; jobId: string };
@@ -35,6 +36,11 @@ export function parseCliArgs(argv: string[]): CliCommand {
   switch (command) {
     case 'run':
       return parseRunArgs(rest);
+    case 'init':
+      if (rest.length > 0) {
+        throw new Error('Usage: agent-runner init');
+      }
+      return { command: 'init' };
     case 'list':
       return { command: 'list' };
     case 'show':
@@ -44,12 +50,13 @@ export function parseCliArgs(argv: string[]): CliCommand {
       return { command: 'show', jobId: rest[0] };
     case 'logs':
       if (!rest[0]) {
-        throw new Error('Usage: agent-runner logs <job-id> [--follow]');
+        throw new Error('Usage: agent-runner logs <job-id> [--follow] [--debug]');
       }
       return {
         command: 'logs',
         jobId: rest[0],
         follow: rest.includes('--follow'),
+        kind: rest.includes('--debug') ? 'debug' : 'run',
       };
     case 'cancel':
       if (!rest[0]) {
@@ -305,10 +312,11 @@ export function resolveSkillTargetRoot(target: 'claude' | 'codex'): string {
 export function helpText(): string {
   return [
     'agent-runner commands:',
+    '  agent-runner init',
     '  agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--host <github-host>] [--ref <ref>] [--detach]',
     '  agent-runner list',
     '  agent-runner show <job-id>',
-    '  agent-runner logs <job-id> [--follow]',
+    '  agent-runner logs <job-id> [--follow] [--debug]',
     '  agent-runner cancel <job-id>',
     '  agent-runner skills install [--force] [--claude-only] [--codex-only]',
   ].join('\n');

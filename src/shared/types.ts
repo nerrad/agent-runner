@@ -52,6 +52,7 @@ export type GitHostProfile = z.infer<typeof GitHostProfileSchema>;
 
 export const ArtifactBundleSchema = z.object({
   logPath: z.string().min(1),
+  debugLogPath: z.string().min(1),
   summaryPath: z.string().min(1),
   testResultsPath: z.string().min(1).optional(),
   gitDiffPath: z.string().min(1),

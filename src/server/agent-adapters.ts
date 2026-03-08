@@ -9,9 +9,8 @@ export interface PreparedAgentRun {
 
 export interface RuntimeAuthPolicy {
   envKey: 'ANTHROPIC_API_KEY' | 'OPENAI_API_KEY';
-  helperEnvVar: 'AGENT_RUNNER_ANTHROPIC_KEY_HELPER' | 'AGENT_RUNNER_OPENAI_KEY_HELPER';
   missingAuthMessage: string;
-  authLoopMessage: string;
+  authFailureMessage: string;
   authFailurePatterns: RegExp[];
   noisePatterns: RegExp[];
 }
@@ -19,11 +18,13 @@ export interface RuntimeAuthPolicy {
 const RUNTIME_AUTH_POLICIES: Record<AgentRuntime, RuntimeAuthPolicy> = {
   claude: {
     envKey: 'ANTHROPIC_API_KEY',
-    helperEnvVar: 'AGENT_RUNNER_ANTHROPIC_KEY_HELPER',
-    missingAuthMessage: 'Claude jobs require ANTHROPIC_API_KEY or an automatically retrieved Anthropic API key for unattended Docker runs.',
-    authLoopMessage: 'Claude authentication failed repeatedly before any meaningful output. Failing the job to avoid an infinite auth loop.',
+    missingAuthMessage: 'Claude jobs require ANTHROPIC_API_KEY to be set in the host environment before launch.',
+    authFailureMessage: 'Claude authentication failed. Failing the job immediately to avoid waiting on a stuck session.',
     authFailurePatterns: [
       /authentication_failed/i,
+      /\bauthentication_error\b/i,
+      /invalid x-api-key/i,
+      /\b401\b.*unauthorized/i,
       /not logged in/i,
       /please run \/login/i,
     ],
@@ -35,9 +36,8 @@ const RUNTIME_AUTH_POLICIES: Record<AgentRuntime, RuntimeAuthPolicy> = {
   },
   codex: {
     envKey: 'OPENAI_API_KEY',
-    helperEnvVar: 'AGENT_RUNNER_OPENAI_KEY_HELPER',
-    missingAuthMessage: 'Codex jobs require OPENAI_API_KEY or an automatically retrieved OpenAI API key for unattended Docker runs.',
-    authLoopMessage: 'Codex authentication failed repeatedly before any meaningful output. Failing the job to avoid an infinite auth loop.',
+    missingAuthMessage: 'Codex jobs require OPENAI_API_KEY to be set in the host environment before launch.',
+    authFailureMessage: 'Codex authentication failed. Failing the job immediately to avoid waiting on a stuck session.',
     authFailurePatterns: [
       /incorrect api key provided/i,
       /\b401\b.*unauthorized/i,
@@ -80,7 +80,7 @@ export class AgentAdapters {
 
     return {
       prompt,
-      command: buildClaudeCommand(job.spec, job.artifacts.finalResponsePath),
+      command: buildClaudeCommand(job.spec, job.artifacts.finalResponsePath, job.artifacts.debugLogPath),
     };
   }
 
@@ -94,8 +94,16 @@ export class AgentAdapters {
 
   async parseResult(job: JobRecord): Promise<AgentResult> {
     const finalContent = await import('node:fs/promises').then((fs) => fs.readFile(job.artifacts.finalResponsePath, 'utf8'));
-    const parsed = JSON.parse(finalContent) as AgentResult;
-    return parsed;
+    const parsed = JSON.parse(finalContent) as Record<string, unknown>;
+
+    if (job.spec.agentRuntime === 'claude') {
+      const structuredOutput = parsed.structured_output;
+      if (structuredOutput && typeof structuredOutput === 'object' && !Array.isArray(structuredOutput)) {
+        return structuredOutput as AgentResult;
+      }
+    }
+
+    return parsed as AgentResult;
   }
 }
 
@@ -156,12 +164,14 @@ function buildCodexCommand(spec: JobSpec, schemaPath: string, outputPath: string
   ];
 }
 
-function buildClaudeCommand(spec: JobSpec, outputPath: string): string[] {
+function buildClaudeCommand(spec: JobSpec, outputPath: string, debugLogPath: string): string[] {
   const optionParts = [
     'claude -p',
     '--dangerously-skip-permissions',
     '--output-format json',
+    `--debug-file ${shellQuote(`/artifacts/${path.basename(debugLogPath)}`)}`,
   ];
+  const claudeDebug = process.env.AGENT_RUNNER_CLAUDE_DEBUG?.trim();
 
   if (spec.model) {
     optionParts.push(`--model ${shellQuote(spec.model)}`);
@@ -169,6 +179,13 @@ function buildClaudeCommand(spec: JobSpec, outputPath: string): string[] {
 
   if (spec.effort !== 'auto') {
     optionParts.push(`--effort ${shellQuote(spec.effort)}`);
+  }
+
+  if (claudeDebug) {
+    const normalized = claudeDebug.toLowerCase();
+    if (claudeDebug !== '1' && normalized !== 'true') {
+      optionParts.push(`--debug ${shellQuote(claudeDebug)}`);
+    }
   }
 
   return [

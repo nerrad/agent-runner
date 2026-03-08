@@ -335,6 +335,34 @@ select {
   font-size: 0.82rem;
 }
 
+.log-header-main {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.log-toggle {
+  display: inline-flex;
+  padding: 0.2rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.log-toggle button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.25rem 0.65rem;
+  background: transparent;
+  color: rgba(248, 241, 231, 0.68);
+  cursor: pointer;
+}
+
+.log-toggle button.active {
+  background: rgba(248, 241, 231, 0.14);
+  color: #f8f1e7;
+}
+
 .log-shell pre {
   margin: 0;
   padding: 1rem;

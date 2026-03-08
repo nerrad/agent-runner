@@ -63,9 +63,10 @@ export function createApp(runtime: RuntimeContext): AppContext {
 
   app.get('/api/jobs/:jobId/logs', async (request, response, next) => {
     try {
+      const kind = request.query.kind === 'debug' ? 'debug' : 'run';
       const wantsStream = request.query.follow === '1' || request.get('accept')?.includes('text/event-stream');
       if (!wantsStream) {
-        const log = await runtime.manager.readLog(request.params.jobId);
+        const log = await runtime.manager.readLog(request.params.jobId, kind);
         response.type('text/plain').send(log);
         return;
       }
@@ -81,7 +82,7 @@ export function createApp(runtime: RuntimeContext): AppContext {
       response.setHeader('Connection', 'keep-alive');
 
       let sentLength = 0;
-      const bootstrap = await runtime.manager.readLog(request.params.jobId);
+      const bootstrap = await runtime.manager.readLog(request.params.jobId, kind);
       if (bootstrap) {
         sentLength = bootstrap.length;
         response.write(`data: ${JSON.stringify({ type: 'bootstrap', chunk: bootstrap, start: 0, end: sentLength })}\n\n`);
@@ -94,7 +95,7 @@ export function createApp(runtime: RuntimeContext): AppContext {
           return true;
         }
 
-        const content = await runtime.manager.readLog(request.params.jobId);
+        const content = await runtime.manager.readLog(request.params.jobId, kind);
         if (content.length > sentLength) {
           const start = sentLength;
           const chunk = content.slice(sentLength);
