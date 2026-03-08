@@ -157,6 +157,37 @@ test('artifact route returns parsed summary payload for the viewer', async () =>
   });
 });
 
+test('artifact route returns raw final response content for the viewer', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-app-final-'));
+  const config = createRuntimeConfig(root);
+  const record = createRecord(config);
+  const finalResponse = JSON.stringify({
+    status: 'completed',
+    summary: 'done',
+    blockerReason: null,
+  });
+
+  await mkdir(path.dirname(record.artifacts.finalResponsePath), { recursive: true });
+  await writeFile(record.artifacts.finalResponsePath, finalResponse, 'utf8');
+
+  await withServer(createRuntime(config, record), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/jobs/${record.id}/artifacts/finalResponse`);
+    assert.equal(response.status, 200);
+
+    const payload = await response.json() as {
+      artifactId: string;
+      label: string;
+      available: boolean;
+      content: string;
+    };
+
+    assert.equal(payload.artifactId, 'finalResponse');
+    assert.equal(payload.label, 'final response');
+    assert.equal(payload.available, true);
+    assert.equal(payload.content, finalResponse);
+  });
+});
+
 test('artifact route reports missing artifacts without failing the viewer request', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-app-missing-'));
   const config = createRuntimeConfig(root);

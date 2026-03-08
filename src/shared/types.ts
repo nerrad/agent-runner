@@ -107,7 +107,7 @@ export const JobSummaryArtifactSchema = z.object({
 });
 export type JobSummaryArtifact = z.infer<typeof JobSummaryArtifactSchema>;
 
-export const JobArtifactIdSchema = z.enum([ 'summary', 'gitDiff', 'transcript' ]);
+export const JobArtifactIdSchema = z.enum([ 'summary', 'gitDiff', 'transcript', 'finalResponse', 'prompt' ]);
 export type JobArtifactId = z.infer<typeof JobArtifactIdSchema>;
 
 export const JobArtifactPayloadSchema = z.object({

@@ -6,6 +6,7 @@ import type {
   JobSummaryArtifact,
   JobRecord,
   JobSpec,
+  JobStatus,
 } from '../shared/types.js';
 
 const INITIAL_FORM: JobSpec = {
@@ -24,9 +25,15 @@ const VIEWER_TABS = [
   { id: 'run', label: 'run.log' },
   { id: 'debug', label: 'debug.log' },
   { id: 'summary', label: 'summary' },
+  { id: 'finalResponse', label: 'final response' },
   { id: 'gitDiff', label: 'git diff' },
   { id: 'transcript', label: 'transcript' },
+  { id: 'prompt', label: 'prompt' },
 ] as const;
+
+const TERMINAL_STATUSES = new Set<JobStatus>([ 'blocked', 'completed', 'failed', 'canceled' ]);
+const ARTIFACT_POLL_INTERVAL_MS = 3000;
+const COPY_FEEDBACK_TTL_MS = 2000;
 
 type ViewerTabId = typeof VIEWER_TABS[number]['id'];
 
@@ -48,6 +55,8 @@ export function App(): ReactElement {
   const [viewerTab, setViewerTab] = useState<ViewerTabId>('run');
   const [logContent, setLogContent] = useState('');
   const [artifactState, setArtifactState] = useState<ArtifactState>(INITIAL_ARTIFACT_STATE);
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  const [showRawFinalResponse, setShowRawFinalResponse] = useState(false);
   const [form, setForm] = useState(INITIAL_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +65,10 @@ export function App(): ReactElement {
   const selectedJob = useMemo(
     () => jobs.find((job) => job.id === selectedJobId) ?? jobs[0] ?? null,
     [jobs, selectedJobId],
+  );
+  const parsedFinalResponse = useMemo(
+    () => parseFinalResponseContent(viewerTab === 'finalResponse' ? artifactState.payload?.content : undefined),
+    [artifactState.payload?.content, viewerTab],
   );
 
   useEffect(() => {
@@ -66,6 +79,30 @@ export function App(): ReactElement {
 
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!copyFeedback) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setCopyFeedback(null);
+    }, COPY_FEEDBACK_TTL_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [copyFeedback]);
+
+  useEffect(() => {
+    if (viewerTab === 'finalResponse') {
+      setShowRawFinalResponse(false);
+    }
+  }, [viewerTab]);
+
+  useEffect(() => {
+    if (viewerTab === 'finalResponse' && parsedFinalResponse === null) {
+      setShowRawFinalResponse(true);
+    }
+  }, [parsedFinalResponse, viewerTab]);
 
   useEffect(() => {
     if (!selectedJob || !isLiveLogTab(viewerTab)) {
@@ -152,13 +189,17 @@ export function App(): ReactElement {
     }
 
     let canceled = false;
-    setArtifactState({
-      loading: true,
-      error: null,
-      payload: null,
-    });
+    let interval: number | undefined;
 
-    void (async () => {
+    const loadArtifact = async (initialLoad: boolean): Promise<void> => {
+      if (initialLoad) {
+        setArtifactState((current) => ({
+          loading: true,
+          error: null,
+          payload: current.payload,
+        }));
+      }
+
       try {
         const response = await fetch(`/api/jobs/${selectedJob.id}/artifacts/${viewerTab}`);
         const payload = await response.json() as unknown;
@@ -169,6 +210,7 @@ export function App(): ReactElement {
         if (canceled) {
           return;
         }
+
         startTransition(() => {
           setArtifactState({
             loading: false,
@@ -180,6 +222,7 @@ export function App(): ReactElement {
         if (canceled) {
           return;
         }
+
         startTransition(() => {
           setArtifactState({
             loading: false,
@@ -188,12 +231,23 @@ export function App(): ReactElement {
           });
         });
       }
-    })();
+    };
+
+    void loadArtifact(true);
+
+    if (!TERMINAL_STATUSES.has(selectedJob.status)) {
+      interval = window.setInterval(() => {
+        void loadArtifact(false);
+      }, ARTIFACT_POLL_INTERVAL_MS);
+    }
 
     return () => {
       canceled = true;
+      if (interval) {
+        window.clearInterval(interval);
+      }
     };
-  }, [selectedJob?.id, viewerTab]);
+  }, [selectedJob?.id, selectedJob?.status, viewerTab]);
 
   async function refreshJobs(): Promise<void> {
     try {
@@ -265,6 +319,21 @@ export function App(): ReactElement {
     await fetch(`/api/jobs/${selectedJob.id}/cancel`, { method: 'POST' });
     await refreshJobs();
   }
+
+  async function copyArtifactCommand(command: string, successLabel: string): Promise<void> {
+    try {
+      if (!navigator.clipboard) {
+        throw new Error('Clipboard API unavailable');
+      }
+      await navigator.clipboard.writeText(command);
+      setCopyFeedback(successLabel);
+    } catch {
+      setCopyFeedback('Clipboard copy failed');
+    }
+  }
+
+  const artifactDir = selectedJob ? directoryPath(selectedJob.artifacts.logPath) : '';
+  const artifactShellCommand = artifactDir ? `cd ${shellQuote(artifactDir)}` : '';
 
   return (
     <div className="page-shell">
@@ -399,7 +468,7 @@ export function App(): ReactElement {
         <section className="panel detail-panel">
           <div className="panel-header">
             <h2>Run Detail</h2>
-            <p>Live logs, branch output, and local debug access.</p>
+            <p>Live logs, branch output, and local artifacts.</p>
           </div>
           {selectedJob ? (
             <div className="detail-grid">
@@ -450,13 +519,33 @@ export function App(): ReactElement {
                       <dd>{selectedJob.debugCommand ?? 'Available after container starts'}</dd>
                     </div>
                     <div>
+                      <dt>Artifact dir</dt>
+                      <dd className="artifact-location">
+                        <code>{artifactDir}</code>
+                        <div className="artifact-actions">
+                          <button
+                            type="button"
+                            className="secondary-button slim-button"
+                            onClick={() => void copyArtifactCommand(artifactDir, 'Copied artifact path')}
+                          >
+                            Copy path
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary-button slim-button"
+                            onClick={() => void copyArtifactCommand(artifactShellCommand, 'Copied cd command')}
+                          >
+                            Copy cd
+                          </button>
+                        </div>
+                        <span className="artifact-command">{artifactShellCommand}</span>
+                        {copyFeedback ? <span className="copy-feedback">{copyFeedback}</span> : null}
+                      </dd>
+                    </div>
+                    <div>
                       <dt>Artifacts</dt>
                       <dd className="artifact-links">
-                        {renderViewerLink('run log', 'run', viewerTab, setViewerTab)}
-                        {renderViewerLink('debug log', 'debug', viewerTab, setViewerTab)}
-                        {renderViewerLink('summary', 'summary', viewerTab, setViewerTab)}
-                        {renderViewerLink('git diff', 'gitDiff', viewerTab, setViewerTab)}
-                        {renderViewerLink('transcript', 'transcript', viewerTab, setViewerTab)}
+                        {VIEWER_TABS.map((tab) => renderViewerLink(tab.label, tab.id, viewerTab, setViewerTab))}
                       </dd>
                     </div>
                     {selectedJob.blockerReason ? (
@@ -486,9 +575,16 @@ export function App(): ReactElement {
                       ))}
                     </div>
                   </div>
-                  <span>{isLiveLogTab(viewerTab) ? 'live' : 'artifact'}</span>
+                  <span className="viewer-status">{viewerStatusLabel(selectedJob.status, viewerTab)}</span>
                 </div>
-                {renderViewerBody(viewerTab, logContent, artifactState)}
+                {renderViewerBody(
+                  viewerTab,
+                  logContent,
+                  artifactState,
+                  parsedFinalResponse,
+                  showRawFinalResponse,
+                  setShowRawFinalResponse,
+                )}
               </div>
             </div>
           ) : (
@@ -508,6 +604,7 @@ function renderViewerLink(
 ): ReactElement {
   return (
     <button
+      key={tab}
       type="button"
       className={`artifact-link ${activeTab === tab ? 'active' : ''}`}
       onClick={() => onSelect(tab)}
@@ -517,14 +614,21 @@ function renderViewerLink(
   );
 }
 
-function renderViewerBody(viewerTab: ViewerTabId, logContent: string, artifactState: ArtifactState): ReactElement {
+function renderViewerBody(
+  viewerTab: ViewerTabId,
+  logContent: string,
+  artifactState: ArtifactState,
+  parsedFinalResponse: ParsedFinalResponse | null,
+  showRawFinalResponse: boolean,
+  setShowRawFinalResponse: (next: boolean) => void,
+): ReactElement {
   if (isLiveLogTab(viewerTab)) {
     return (
       <pre>{logContent || (viewerTab === 'debug' ? 'Waiting for debug output...' : 'Waiting for output...')}</pre>
     );
   }
 
-  if (artifactState.loading) {
+  if (artifactState.loading && !artifactState.payload) {
     return <pre>Loading {viewerTabLabel(viewerTab)}...</pre>;
   }
 
@@ -540,6 +644,10 @@ function renderViewerBody(viewerTab: ViewerTabId, logContent: string, artifactSt
     return renderSummaryArtifact(artifactState.payload.summary);
   }
 
+  if (viewerTab === 'finalResponse') {
+    return renderFinalResponseArtifact(artifactState.payload, parsedFinalResponse, showRawFinalResponse, setShowRawFinalResponse);
+  }
+
   return (
     <pre>{artifactText(viewerTab, artifactState.payload)}</pre>
   );
@@ -552,7 +660,9 @@ function renderSummaryArtifact(summary: JobSummaryArtifact): ReactElement {
         <span className={`status-pill status-${summary.status}`}>{summary.status}</span>
         <span>{summary.finishedAt}</span>
       </div>
-      <p className="summary-copy">{summary.summary ?? 'No agent summary captured.'}</p>
+      <div className="summary-copy">
+        {renderMarkdownishText(summary.summary ?? 'The agent did not return a summary string for this job.')}
+      </div>
       <dl className="summary-grid">
         <div>
           <dt>Branch</dt>
@@ -617,6 +727,10 @@ function artifactText(viewerTab: JobArtifactId, payload: JobArtifactPayload): st
       return 'No summary captured for this job.';
     case 'transcript':
       return 'No transcript captured for this job.';
+    case 'finalResponse':
+      return 'No final response artifact captured for this job.';
+    case 'prompt':
+      return 'No prompt artifact captured for this job.';
   }
 }
 
@@ -632,9 +746,392 @@ function viewerTabLabel(viewerTab: ViewerTabId): string {
       return 'Debug log';
     case 'summary':
       return 'Summary';
+    case 'finalResponse':
+      return 'Final response';
     case 'gitDiff':
       return 'Git diff';
     case 'transcript':
       return 'Transcript';
+    case 'prompt':
+      return 'Prompt';
   }
+}
+
+function viewerStatusLabel(status: JobStatus, viewerTab: ViewerTabId): string {
+  if (isLiveLogTab(viewerTab)) {
+    return 'live stream';
+  }
+
+  return TERMINAL_STATUSES.has(status) ? 'stored locally' : 'polling artifacts';
+}
+
+function directoryPath(absolutePath: string): string {
+  const lastSlash = absolutePath.lastIndexOf('/');
+  return lastSlash >= 0 ? absolutePath.slice(0, lastSlash) : absolutePath;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll('\'', `'\"'\"'`)}'`;
+}
+
+function prettifyJson(content: string): string {
+  try {
+    return JSON.stringify(JSON.parse(content), null, 2);
+  } catch {
+    return content;
+  }
+}
+
+interface ParsedFinalResponse {
+  primary: {
+    status?: string;
+    summary?: string;
+    blockerReason?: string | null;
+  };
+  primarySource: Record<string, unknown>;
+  metadata: Array<[string, unknown]>;
+  raw: string;
+}
+
+function renderFinalResponseArtifact(
+  payload: JobArtifactPayload,
+  parsed: ParsedFinalResponse | null,
+  showRaw: boolean,
+  setShowRaw: (next: boolean) => void,
+): ReactElement {
+  const rawContent = payload.content.trim().length > 0 ? prettifyJson(payload.content) : artifactText('finalResponse', payload);
+  const parsedContent = parsed;
+
+  return (
+    <div className="final-response-view">
+      <div className="viewer-subtoggle" role="tablist" aria-label="Final response view">
+        <button
+          type="button"
+          className={!showRaw ? 'active' : ''}
+          onClick={() => setShowRaw(false)}
+          disabled={parsed === null}
+        >
+          Parsed
+        </button>
+        <button
+          type="button"
+          className={showRaw ? 'active' : ''}
+          onClick={() => setShowRaw(true)}
+        >
+          Raw
+        </button>
+      </div>
+
+      {parsed === null ? (
+        <p className="viewer-note">Parsed view unavailable because this artifact is not valid JSON.</p>
+      ) : null}
+
+      {showRaw || parsedContent === null ? (
+        <pre>{rawContent}</pre>
+      ) : (
+        <div className="final-response-card">
+          <div className="summary-topline">
+            <span className={`status-pill status-${parsedContent.primary.status ?? 'completed'}`}>{parsedContent.primary.status ?? 'unknown'}</span>
+          </div>
+          <div className="summary-section">
+            <h3>Summary</h3>
+            <div className="summary-copy">
+              {renderMarkdownishText(parsedContent.primary.summary ?? 'No summary field present.')}
+            </div>
+          </div>
+          <dl className="summary-grid">
+            <div>
+              <dt>Blocker</dt>
+              <dd>{parsedContent.primary.blockerReason ?? 'None'}</dd>
+            </div>
+          </dl>
+          {parsedContent.metadata.length > 0 ? (
+            <div className="summary-section">
+              <h3>Metadata</h3>
+              <dl className="summary-grid">
+                {parsedContent.metadata.map(([ key, value ]) => (
+                  <div key={key}>
+                    <dt>{key}</dt>
+                    <dd>{renderMetadataValue(key, value)}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function parseFinalResponseContent(content?: string): ParsedFinalResponse | null {
+  if (!content || content.trim().length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+
+    const topLevel = parsed as Record<string, unknown>;
+    const primarySource = (
+      topLevel.structured_output && typeof topLevel.structured_output === 'object' && !Array.isArray(topLevel.structured_output)
+        ? topLevel.structured_output
+        : topLevel
+    ) as Record<string, unknown>;
+
+    const metadata = Object.entries(topLevel).filter(([ key ]) => {
+      if (key === 'structured_output') {
+        return false;
+      }
+
+      if (!('structured_output' in topLevel)) {
+        return key !== 'status' && key !== 'summary' && key !== 'blockerReason';
+      }
+
+      return true;
+    });
+
+    return {
+      primary: {
+        status: typeof primarySource.status === 'string' ? primarySource.status : undefined,
+        summary: typeof primarySource.summary === 'string' ? primarySource.summary : undefined,
+        blockerReason:
+          typeof primarySource.blockerReason === 'string' || primarySource.blockerReason === null
+            ? (primarySource.blockerReason as string | null | undefined)
+            : undefined,
+      },
+      primarySource,
+      metadata,
+      raw: content,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function renderMetadataValue(key: string, value: unknown): ReactElement {
+  const normalizedKey = normalizeMetadataKey(key);
+  const normalizedValue = coerceStructuredValue(value);
+
+  if (normalizedKey === 'permission denials') {
+    const entries = Array.isArray(normalizedValue)
+      ? normalizedValue.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+      : [];
+
+    return (
+      <span>{entries.length > 0 ? entries.join(', ') : 'None'}</span>
+    );
+  }
+
+  if (normalizedKey === 'usage' || normalizedKey === 'model usage') {
+    return renderStructuredKeyValue(normalizedValue);
+  }
+
+  return renderStructuredMetadata(normalizedValue);
+}
+
+function renderStructuredMetadata(value: unknown): ReactElement {
+  if (typeof value === 'string') {
+    return <span className="metadata-copy">{value}</span>;
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return <span>{String(value)}</span>;
+  }
+
+  if (value === null) {
+    return <span>None</span>;
+  }
+
+  if (Array.isArray(value)) {
+    const entries = value.map((entry) => stringifyMetadataValue(entry)).filter(Boolean);
+    return <span className="metadata-copy">{entries.length > 0 ? entries.join(', ') : 'None'}</span>;
+  }
+
+  if (value && typeof value === 'object') {
+    return renderStructuredKeyValue(value);
+  }
+
+  return <span>{String(value)}</span>;
+}
+
+function renderStructuredKeyValue(value: unknown): ReactElement {
+  if (typeof value === 'string') {
+    const rows = parseUsageRows(value);
+    if (rows.length > 0) {
+      return (
+        <dl className="kv-list">
+          {rows.map(([ usageKey, usageValue ]) => (
+            <div key={usageKey}>
+              <dt>{humanizeMetadataLabel(usageKey)}</dt>
+              <dd>{renderStructuredMetadata(coerceStructuredValue(usageValue))}</dd>
+            </div>
+          ))}
+        </dl>
+      );
+    }
+
+    return <span className="metadata-copy">{value}</span>;
+  }
+
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return renderStructuredMetadata(value);
+  }
+
+  const rows = Object.entries(value as Record<string, unknown>);
+  return (
+    <dl className="kv-list">
+      {rows.map(([ nestedKey, nestedValue ]) => (
+        <div key={nestedKey}>
+          <dt>{humanizeMetadataLabel(nestedKey)}</dt>
+          <dd>{renderStructuredMetadata(coerceStructuredValue(nestedValue))}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function parseUsageRows(value: unknown): Array<[string, unknown]> {
+  if (typeof value === 'string') {
+    return value
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const delimiterIndex = line.indexOf(':');
+        if (delimiterIndex === -1) {
+          return [ line, '' ] as [string, unknown];
+        }
+
+        return [
+          line.slice(0, delimiterIndex).trim(),
+          line.slice(delimiterIndex + 1).trim(),
+        ] as [string, unknown];
+      });
+  }
+
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return Object.entries(value as Record<string, unknown>);
+  }
+
+  return [];
+}
+
+function normalizeMetadataKey(key: string): string {
+  const spaced = key
+    .replaceAll(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replaceAll(/[_-]+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+  if (spaced === 'modelusage') {
+    return 'model usage';
+  }
+
+  if (spaced === 'permissiondenials') {
+    return 'permission denials';
+  }
+
+  return spaced;
+}
+
+function humanizeMetadataLabel(key: string): string {
+  return normalizeMetadataKey(key).replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function coerceStructuredValue(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return value;
+  }
+
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return value;
+  }
+}
+
+function stringifyMetadataValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+
+  if (value === null) {
+    return 'null';
+  }
+
+  return JSON.stringify(value);
+}
+
+function renderMarkdownishText(content: string): ReactElement {
+  const blocks = content.replaceAll('\r\n', '\n').split('\n\n');
+
+  return (
+    <div className="markdownish">
+      {blocks.map((block, index) => renderMarkdownishBlock(block, index))}
+    </div>
+  );
+}
+
+function renderMarkdownishBlock(block: string, index: number): ReactElement {
+  const lines = block.split('\n').map((line) => line.trimEnd()).filter((line) => line.length > 0);
+
+  if (lines.every((line) => /^[-*]\s+/.test(line))) {
+    return (
+      <ul key={index} className="markdownish-list">
+        {lines.map((line, lineIndex) => (
+          <li key={`${index}-${lineIndex}`}>{renderInlineMarkdown(line.replace(/^[-*]\s+/, ''))}</li>
+        ))}
+      </ul>
+    );
+  }
+
+  if (lines.every((line) => /^\d+\.\s+/.test(line))) {
+    return (
+      <ol key={index} className="markdownish-list">
+        {lines.map((line, lineIndex) => (
+          <li key={`${index}-${lineIndex}`}>{renderInlineMarkdown(line.replace(/^\d+\.\s+/, ''))}</li>
+        ))}
+      </ol>
+    );
+  }
+
+  return (
+    <p key={index}>
+      {lines.map((line, lineIndex) => (
+        <span key={`${index}-${lineIndex}`}>
+          {renderInlineMarkdown(line)}
+          {lineIndex < lines.length - 1 ? <br /> : null}
+        </span>
+      ))}
+    </p>
+  );
+}
+
+function renderInlineMarkdown(content: string): Array<ReactElement | string> {
+  const parts = content.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean);
+
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return <code key={index}>{part.slice(1, -1)}</code>;
+    }
+
+    return part;
+  });
 }

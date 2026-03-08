@@ -299,6 +299,7 @@ test('job manager processes a claude job through completion with direct env auth
   const finished = await waitForJob(store, job.id, [ 'completed' ]);
   const log = await readFile(finished.artifacts.logPath, 'utf8');
   const summary = JSON.parse(await readFile(finished.artifacts.summaryPath, 'utf8')) as { summary?: string };
+  const transcript = await readFile(finished.artifacts.agentTranscriptPath, 'utf8');
 
   assert.equal(finished.status, 'completed');
   assert.equal(finished.containerId, 'container-123');
@@ -313,6 +314,8 @@ test('job manager processes a claude job through completion with direct env auth
   assert.match(log, /\[agent-runner\] container started: container-123/);
   assert.match(log, /\[agent-runner\] job completed/);
   assert.equal(summary.summary, 'done');
+  assert.match(transcript, /\[agent-runner\] final structured response/);
+  assert.match(transcript, /"summary":"done"/);
 
   clearAuthEnv();
 });

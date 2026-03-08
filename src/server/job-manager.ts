@@ -360,6 +360,13 @@ export class JobManager {
     sourceSpecPath: string,
     committed: boolean,
   ): Promise<void> {
+    let finalResponseContent = '';
+    try {
+      finalResponseContent = await readFile(record.artifacts.finalResponsePath, 'utf8');
+    } catch {
+      finalResponseContent = '';
+    }
+
     let diffContent = '';
     try {
       diffContent = committed
@@ -370,6 +377,13 @@ export class JobManager {
     }
 
     await writeFile(record.artifacts.gitDiffPath, diffContent, 'utf8');
+    if (finalResponseContent.trim().length > 0) {
+      await appendFile(
+        record.artifacts.agentTranscriptPath,
+        `\n[agent-runner] final structured response\n${finalResponseContent}\n`,
+        'utf8',
+      );
+    }
     await writeJsonAtomic(record.artifacts.summaryPath, {
       id: record.id,
       status: agentResult?.status ?? record.status,
