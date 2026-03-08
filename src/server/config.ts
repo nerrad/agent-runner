@@ -39,7 +39,7 @@ export async function resolveDockerSocketPath(): Promise<string> {
 
 export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
   const appDir = process.env.AGENT_RUNNER_HOME ?? path.join(os.homedir(), '.agent-runner');
-  const sourceRoot = path.resolve(new URL('../../..', import.meta.url).pathname);
+  const sourceRoot = path.resolve(new URL('../..', import.meta.url).pathname);
 
   const config: RuntimeConfig = {
     appDir,

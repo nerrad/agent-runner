@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
-import { normalizeRunSpec, parseCliArgs, resolveSkillTargetRoot } from '../server/cli-utils.js';
+import { formatJobSummary, normalizeRunSpec, parseCliArgs, resolveSkillTargetRoot } from '../server/cli-utils.js';
 import { runCommand } from '../server/process-utils.js';
 
 test('parseCliArgs handles run and installer commands', () => {
@@ -93,4 +93,37 @@ test('normalizeRunSpec accepts absolute spec paths for git URLs', async () => {
 test('resolveSkillTargetRoot maps Claude and Codex install roots', () => {
   assert.match(resolveSkillTargetRoot('claude'), /\/\.claude\/skills$/);
   assert.match(resolveSkillTargetRoot('codex'), /\/\.codex\/skills$/);
+});
+
+test('formatJobSummary includes blocker reasons when present', () => {
+  const summary = formatJobSummary({
+    id: 'job-123',
+    status: 'failed',
+    workspacePath: '/tmp/workspace',
+    branchName: 'agent-runner/job-123',
+    blockerReason: 'Missing ANTHROPIC_API_KEY',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    spec: {
+      repoUrl: 'git@github.com:owner/repo.git',
+      specPath: 'agent-os/specs/example',
+      agentRuntime: 'claude',
+      effort: 'auto',
+      githubHost: 'github.com',
+      commitOnStop: true,
+      wpEnvEnabled: true,
+    },
+    artifacts: {
+      logPath: '/tmp/log',
+      summaryPath: '/tmp/summary.json',
+      gitDiffPath: '/tmp/git.diff',
+      agentTranscriptPath: '/tmp/transcript.log',
+      finalResponsePath: '/tmp/final.json',
+      schemaPath: '/tmp/schema.json',
+      promptPath: '/tmp/prompt.txt',
+      specBundlePath: '/tmp/spec',
+    },
+  });
+
+  assert.match(summary, /Missing ANTHROPIC_API_KEY/);
 });

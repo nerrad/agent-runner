@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import type { RuntimeConfig } from '../server/config.js';
-import { createGitHostProfile } from '../server/config.js';
+import { createGitHostProfile, loadRuntimeConfig } from '../server/config.js';
 import { buildJobPaths } from '../server/paths.js';
 
 const homeDir = '/home/tester';
@@ -45,4 +45,10 @@ test('buildJobPaths creates stable artifact layout', () => {
   assert.equal(paths.artifacts.summaryPath, '/tmp/agent-runner/artifacts/job-123/summary.json');
   assert.equal(paths.artifacts.finalResponsePath, '/tmp/agent-runner/artifacts/job-123/final-response.json');
   assert.equal(paths.artifacts.specBundlePath, '/tmp/agent-runner/artifacts/job-123/spec');
+});
+
+test('loadRuntimeConfig resolves the repository root for docker assets', async () => {
+  const config = await loadRuntimeConfig();
+
+  assert.match(config.sourceRoot, /\/agent-runner$/);
 });

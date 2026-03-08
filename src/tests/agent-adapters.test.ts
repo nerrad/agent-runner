@@ -62,6 +62,8 @@ test('prepare codex run writes prompt/schema and uses exec mode', async () => {
   assert.match(prompt, /Start with \/spec\/plan\.md/);
   assert.match(prompt, /Read \/spec\/shape\.md/);
   assert.match(schema, /"completed"/);
+  assert.match(schema, /"blockerReason"/);
+  assert.match(schema, /"null"/);
 });
 
 test('prepare claude run uses print mode with schema', async () => {
@@ -74,4 +76,18 @@ test('prepare claude run uses print mode with schema', async () => {
   assert.match(prepared.command[2], /--effort 'medium'/);
   assert.match(prepared.command[2], /--dangerously-skip-permissions/);
   assert.equal(adapters.runtimeEnvKeys('claude')[0], 'ANTHROPIC_API_KEY');
+});
+
+test('runtime auth policies expose helper commands and auth-loop signatures', () => {
+  const adapters = new AgentAdapters();
+  const claude = adapters.runtimeAuthPolicy('claude');
+  const codex = adapters.runtimeAuthPolicy('codex');
+
+  assert.equal(claude.helperEnvVar, 'AGENT_RUNNER_ANTHROPIC_KEY_HELPER');
+  assert.equal(claude.allowLocalStateFallback, false);
+  assert.equal(codex.helperEnvVar, 'AGENT_RUNNER_OPENAI_KEY_HELPER');
+  assert.equal(codex.allowLocalStateFallback, true);
+  assert.ok(claude.authFailurePatterns.some((pattern) => pattern.test('Please run /login')));
+  assert.ok(codex.authFailurePatterns.some((pattern) => pattern.test('Please run codex --login')));
+  assert.ok(claude.noisePatterns.some((pattern) => pattern.test('Started container abc123')));
 });

@@ -73,7 +73,7 @@ export const JobRecordSchema = z.object({
   headSha: z.string().optional(),
   startedAt: z.string().optional(),
   endedAt: z.string().optional(),
-  blockerReason: z.string().optional(),
+  blockerReason: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   artifacts: ArtifactBundleSchema,
@@ -85,7 +85,7 @@ export type JobRecord = z.infer<typeof JobRecordSchema>;
 export const AgentResultSchema = z.object({
   status: z.enum([ 'completed', 'blocked' ]),
   summary: z.string().min(1),
-  blockerReason: z.string().optional(),
+  blockerReason: z.string().nullable().optional(),
 });
 export type AgentResult = z.infer<typeof AgentResultSchema>;
 

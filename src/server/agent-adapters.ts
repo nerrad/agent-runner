@@ -7,6 +7,56 @@ export interface PreparedAgentRun {
   prompt: string;
 }
 
+export interface RuntimeAuthPolicy {
+  envKey: 'ANTHROPIC_API_KEY' | 'OPENAI_API_KEY';
+  helperEnvVar: 'AGENT_RUNNER_ANTHROPIC_KEY_HELPER' | 'AGENT_RUNNER_OPENAI_KEY_HELPER';
+  allowLocalStateFallback: boolean;
+  missingAuthMessage: string;
+  authLoopMessage: string;
+  authFailurePatterns: RegExp[];
+  noisePatterns: RegExp[];
+}
+
+const RUNTIME_AUTH_POLICIES: Record<AgentRuntime, RuntimeAuthPolicy> = {
+  claude: {
+    envKey: 'ANTHROPIC_API_KEY',
+    helperEnvVar: 'AGENT_RUNNER_ANTHROPIC_KEY_HELPER',
+    allowLocalStateFallback: false,
+    missingAuthMessage: 'Claude jobs require ANTHROPIC_API_KEY or AGENT_RUNNER_ANTHROPIC_KEY_HELPER for unattended Docker runs.',
+    authLoopMessage: 'Claude authentication failed repeatedly before any meaningful output. Failing the job to avoid an infinite auth loop.',
+    authFailurePatterns: [
+      /authentication_failed/i,
+      /not logged in/i,
+      /please run \/login/i,
+    ],
+    noisePatterns: [
+      /^\s*$/,
+      /^Started container\b/i,
+      /\bStructuredOutput\b/,
+    ],
+  },
+  codex: {
+    envKey: 'OPENAI_API_KEY',
+    helperEnvVar: 'AGENT_RUNNER_OPENAI_KEY_HELPER',
+    allowLocalStateFallback: true,
+    missingAuthMessage: 'Codex jobs require OPENAI_API_KEY, AGENT_RUNNER_OPENAI_KEY_HELPER, or a non-empty mounted ~/.codex auth state.',
+    authLoopMessage: 'Codex authentication failed repeatedly before any meaningful output. Failing the job to avoid an infinite auth loop.',
+    authFailurePatterns: [
+      /incorrect api key provided/i,
+      /\b401\b.*unauthorized/i,
+      /\b403\b.*forbidden/i,
+      /\bOPENAI_API_KEY\b/,
+      /please run codex --login/i,
+      /\bcodex --login\b/i,
+    ],
+    noisePatterns: [
+      /^\s*$/,
+      /^Started container\b/i,
+      /\bStructuredOutput\b/,
+    ],
+  },
+};
+
 export class AgentAdapters {
   async prepare(job: JobRecord): Promise<PreparedAgentRun> {
     const prompt = buildAgentPrompt(job.spec, job.branchName);
@@ -16,9 +66,9 @@ export class AgentAdapters {
       properties: {
         status: { type: 'string', enum: [ 'completed', 'blocked' ] },
         summary: { type: 'string' },
-        blockerReason: { type: 'string' },
+        blockerReason: { type: [ 'string', 'null' ] },
       },
-      required: [ 'status', 'summary' ],
+      required: [ 'status', 'summary', 'blockerReason' ],
     });
 
     await writeFile(job.artifacts.promptPath, prompt, 'utf8');
@@ -38,10 +88,11 @@ export class AgentAdapters {
   }
 
   runtimeEnvKeys(runtime: AgentRuntime): string[] {
-    if (runtime === 'claude') {
-      return [ 'ANTHROPIC_API_KEY' ];
-    }
-    return [ 'OPENAI_API_KEY' ];
+    return [ this.runtimeAuthPolicy(runtime).envKey ];
+  }
+
+  runtimeAuthPolicy(runtime: AgentRuntime): RuntimeAuthPolicy {
+    return RUNTIME_AUTH_POLICIES[runtime];
   }
 
   async parseResult(job: JobRecord): Promise<AgentResult> {

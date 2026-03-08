@@ -268,6 +268,10 @@ export function formatJobSummary(record: JobRecord): string {
     `effort=${record.spec.effort}`,
   ];
 
+  if (record.blockerReason) {
+    summary.push(`blocker=${record.blockerReason}`);
+  }
+
   if (record.resolvedSpec) {
     summary.push(`resolved=${record.resolvedSpec.specMode} ${record.resolvedSpec.specFiles.join(', ')}`);
   }

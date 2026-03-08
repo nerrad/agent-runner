@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, open, readFile, unlink, writeFile } from 'node:fs/promises';
+import { appendFile, open, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentResult, JobRecord, JobSpec, JobStatus } from '../shared/types.js';
 import { AgentResultSchema, JobSpecSchema } from '../shared/types.js';
 import type { RuntimeConfig } from './config.js';
 import { createGitHostProfile } from './config.js';
 import type { DockerRunner } from './docker-runner.js';
-import { ensureDir, safeRemove, writeJsonAtomic } from './fs-utils.js';
+import { ensureDir, pathExists, safeRemove, writeJsonAtomic } from './fs-utils.js';
 import type { GitManager } from './git-manager.js';
 import { JobEvents } from './job-events.js';
 import { launchDetachedJobRunner } from './job-launcher.js';
@@ -26,6 +26,18 @@ export interface JobManagerOptions {
 interface JobLockPayload {
   jobId: string;
   pid: number;
+}
+
+interface ResolvedRuntimeAuth {
+  env: Record<string, string>;
+  source: 'env' | 'helper' | 'local-state';
+}
+
+interface AuthLoopState {
+  authFailureCount: number;
+  meaningfulOutputSeen: boolean;
+  abortRequested: boolean;
+  blockerReason?: string;
 }
 
 export class JobManager {
@@ -69,6 +81,20 @@ export class JobManager {
       artifacts: paths.artifacts,
     };
 
+    const authResult = await this.resolveRuntimeAuth(spec.agentRuntime);
+    if (!authResult.ok) {
+      await writeFile(record.artifacts.logPath, `${authResult.message}\n`, 'utf8');
+      const failedRecord: JobRecord = {
+        ...record,
+        status: 'failed',
+        endedAt: now,
+        blockerReason: authResult.message,
+      };
+      await this.store.save(failedRecord);
+      this.events.emitRecord(failedRecord);
+      return failedRecord;
+    }
+
     await this.store.save(record);
     this.events.emitRecord(record);
 
@@ -103,11 +129,13 @@ export class JobManager {
       return record;
     }
 
-    return await this.updateRecord(record, {
+    const canceled = await this.updateRecord(record, {
       status: 'canceled',
       endedAt: new Date().toISOString(),
       blockerReason: 'Canceled by user',
     });
+    await this.cleanupActiveLockForJob(jobId);
+    return canceled;
   }
 
   async readLog(jobId: string): Promise<string> {
@@ -153,15 +181,8 @@ export class JobManager {
   private async executeJob(jobId: string): Promise<void> {
     let record = await this.requireJob(jobId);
     const profile = createGitHostProfile(this.config, record.spec.githubHost);
-    const runtimeEnvKeys = this.adapters.runtimeEnvKeys(record.spec.agentRuntime);
-    const runtimeEnv: Record<string, string> = {};
-
-    for (const key of runtimeEnvKeys) {
-      const value = process.env[key];
-      if (value) {
-        runtimeEnv[key] = value;
-      }
-    }
+    const runtimeAuth = await this.resolveRuntimeAuth(record.spec.agentRuntime);
+    const runtimeEnv: Record<string, string> = runtimeAuth.ok ? { ...runtimeAuth.value.env } : {};
 
     if (profile.proxyUrl) {
       runtimeEnv.HTTPS_PROXY = profile.proxyUrl;
@@ -169,6 +190,16 @@ export class JobManager {
 
     await writeFile(record.artifacts.logPath, '', 'utf8');
     await writeFile(record.artifacts.agentTranscriptPath, '', 'utf8');
+
+    if (!runtimeAuth.ok) {
+      await appendFile(record.artifacts.logPath, `${runtimeAuth.message}\n`, 'utf8');
+      await this.updateRecord(record, {
+        status: 'failed',
+        endedAt: new Date().toISOString(),
+        blockerReason: runtimeAuth.message,
+      });
+      return;
+    }
 
     record = await this.updateRecord(record, {
       status: 'cloning',
@@ -199,6 +230,13 @@ export class JobManager {
       status: 'running',
     });
 
+    const authLoopState: AuthLoopState = {
+      authFailureCount: 0,
+      meaningfulOutputSeen: false,
+      abortRequested: false,
+    };
+    const runtimePolicy = this.adapters.runtimeAuthPolicy(record.spec.agentRuntime);
+
     const dockerResult = await this.docker.runJob({
       job: record,
       command: prepared.command,
@@ -217,6 +255,8 @@ export class JobManager {
           chunk,
           at: new Date().toISOString(),
         });
+
+        await this.observeRuntimeLog(record, chunk, authLoopState);
       },
     });
 
@@ -224,6 +264,15 @@ export class JobManager {
     if (latestRecord.status === 'canceled') {
       await this.updateRecord(latestRecord, {
         endedAt: latestRecord.endedAt ?? new Date().toISOString(),
+      });
+      return;
+    }
+
+    if (authLoopState.blockerReason) {
+      await this.updateRecord(latestRecord, {
+        status: 'failed',
+        endedAt: new Date().toISOString(),
+        blockerReason: authLoopState.blockerReason,
       });
       return;
     }
@@ -295,6 +344,101 @@ export class JobManager {
     });
   }
 
+  private async resolveRuntimeAuth(
+    runtime: JobSpec['agentRuntime'],
+  ): Promise<{ ok: true; value: ResolvedRuntimeAuth } | { ok: false; message: string }> {
+    const policy = this.adapters.runtimeAuthPolicy(runtime);
+    const directValue = process.env[policy.envKey]?.trim();
+    if (directValue) {
+      return {
+        ok: true,
+        value: {
+          env: { [policy.envKey]: directValue },
+          source: 'env',
+        },
+      };
+    }
+
+    const helperCommand = process.env[policy.helperEnvVar]?.trim();
+    if (helperCommand) {
+      const helperResult = await runCommand('/bin/sh', [ '-lc', helperCommand ], {
+        env: process.env,
+      });
+      const helperValue = helperResult.stdout.trim();
+      if (helperResult.exitCode === 0 && helperValue) {
+        return {
+          ok: true,
+          value: {
+            env: { [ policy.envKey ]: helperValue },
+            source: 'helper',
+          },
+        };
+      }
+    }
+
+    if (policy.allowLocalStateFallback && await this.hasCodexLocalState()) {
+      return {
+        ok: true,
+        value: {
+          env: {},
+          source: 'local-state',
+        },
+      };
+    }
+
+    return { ok: false, message: policy.missingAuthMessage };
+  }
+
+  private async hasCodexLocalState(): Promise<boolean> {
+    if (!await pathExists(this.config.codexDir)) {
+      return false;
+    }
+
+    try {
+      const entries = await readdir(this.config.codexDir);
+      return entries.length > 0;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  private async observeRuntimeLog(record: JobRecord, chunk: string, state: AuthLoopState): Promise<void> {
+    if (state.abortRequested || state.blockerReason) {
+      return;
+    }
+
+    const policy = this.adapters.runtimeAuthPolicy(record.spec.agentRuntime);
+    const lines = chunk.split(/\r?\n/);
+
+    for (const line of lines) {
+      if (policy.noisePatterns.some((pattern) => pattern.test(line))) {
+        continue;
+      }
+
+      if (policy.authFailurePatterns.some((pattern) => pattern.test(line))) {
+        state.authFailureCount += 1;
+        continue;
+      }
+
+      state.meaningfulOutputSeen = true;
+    }
+
+    if (state.meaningfulOutputSeen || state.authFailureCount < 3) {
+      return;
+    }
+
+    state.abortRequested = true;
+    state.blockerReason = policy.authLoopMessage;
+    await appendFile(record.artifacts.logPath, `${policy.authLoopMessage}\n`, 'utf8');
+
+    if (record.containerId) {
+      await this.docker.stopJob(record.containerId);
+    }
+  }
+
   private async acquireJobSlot(jobId: string): Promise<JobLockPayload | null> {
     for (;;) {
       const record = await this.requireJob(jobId);
@@ -322,16 +466,38 @@ export class JobManager {
     }
   }
 
-  private async clearStaleLock(): Promise<boolean> {
-    let payload: JobLockPayload | null = null;
+  private async cleanupActiveLockForJob(jobId: string): Promise<void> {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const payload = await this.readActiveLock();
+      if (!payload || payload.jobId !== jobId) {
+        return;
+      }
+
+      if (!payload.pid || !this.isProcessAlive(payload.pid)) {
+        await safeRemove(this.activeLockPath);
+        return;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
+  private async readActiveLock(): Promise<JobLockPayload | null> {
     try {
       const raw = await readFile(this.activeLockPath, 'utf8');
-      payload = JSON.parse(raw) as JobLockPayload;
+      return JSON.parse(raw) as JobLockPayload;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return true;
+        return null;
       }
-      payload = null;
+      throw error;
+    }
+  }
+
+  private async clearStaleLock(): Promise<boolean> {
+    const payload = await this.readActiveLock();
+    if (!payload) {
+      return true;
     }
 
     if (!payload?.pid || this.isProcessAlive(payload.pid)) {

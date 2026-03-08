@@ -18,7 +18,7 @@ This tool is designed for trusted local use only.
 - Starts an ephemeral Linux worker container for each job
 - Mounts the host Docker socket so `@wordpress/env` can start nested WordPress environments
 - Mounts host `~/.config/gh` for `gh` CLI usage inside the worker
-- Mounts host `~/.claude`, `~/.claude.json`, and `~/.codex` into the worker home so Claude Code and Codex use the same local login state and write usage back to the normal host tracking files
+- Mounts host `~/.claude`, `~/.claude.json`, and `~/.codex` into the worker home so local agent config and usage state remain available inside the worker
 - Forwards the host SSH agent into the worker for git-over-SSH
 - Captures logs, summaries, diffs, the staged spec bundle, and the agent transcript under `~/.agent-runner/artifacts/<job-id>`
 
@@ -101,19 +101,28 @@ Prompt contract:
 
 ## Authentication
 
-Local login state is the primary auth path for Claude Code and Codex.
+Unattended Docker runs should authenticate with host-resolved API keys.
 
-- Claude jobs use the mounted host `~/.claude` and `~/.claude.json`
-- Codex jobs use the mounted host `~/.codex`
-- If present, `ANTHROPIC_API_KEY` is passed through only for Claude jobs
-- If present, `OPENAI_API_KEY` is passed through only for Codex jobs
+- Claude jobs require `ANTHROPIC_API_KEY` or `AGENT_RUNNER_ANTHROPIC_KEY_HELPER`
+- Codex jobs prefer `OPENAI_API_KEY` or `AGENT_RUNNER_OPENAI_KEY_HELPER`
+- Codex can still fall back to mounted host `~/.codex` state as a best-effort path when no key is resolved
+- Host `~/.claude`, `~/.claude.json`, and `~/.codex` are still mounted for local config and usage state, but they are not treated as the primary unattended auth contract
 
-API keys are optional fallback auth, not required when local login state is already valid:
+Direct environment variables are the highest-precedence source:
 
 ```bash
 export ANTHROPIC_API_KEY=...
 export OPENAI_API_KEY=...
 ```
+
+Optional host helper commands can resolve keys just before the container starts:
+
+```bash
+export AGENT_RUNNER_ANTHROPIC_KEY_HELPER='security find-generic-password -a "$USER" -s anthropic-api-key -w'
+export AGENT_RUNNER_OPENAI_KEY_HELPER='security find-generic-password -a "$USER" -s openai-api-key -w'
+```
+
+Helper commands run on the host. They must print only the API key to stdout. Their output is injected into the container as the runtime env var and is not written to job artifacts.
 
 Optional overrides:
 
@@ -243,10 +252,27 @@ pnpm smoke:docker
 pnpm smoke:wp-env
 ```
 
+Manual auth validation:
+
+```bash
+# Claude should fail before container start when no API key or helper is available
+env -u ANTHROPIC_API_KEY -u AGENT_RUNNER_ANTHROPIC_KEY_HELPER \
+  pnpm cli -- run --repo <path-or-url> --spec <path> --runtime claude
+
+# Claude should run when an API key or helper is available
+ANTHROPIC_API_KEY=... pnpm cli -- run --repo <path-or-url> --spec <path> --runtime claude
+
+# Codex mounted state can be checked directly, but API-key auth is the preferred unattended path
+env -u OPENAI_API_KEY -u AGENT_RUNNER_OPENAI_KEY_HELPER \
+  pnpm cli -- run --repo <path-or-url> --spec <path> --runtime codex
+
+OPENAI_API_KEY=... pnpm cli -- run --repo <path-or-url> --spec <path> --runtime codex
+```
+
 ## Notes
 
 - `gh` commands inside the worker depend on valid host auth in `~/.config/gh`
-- Claude Code usage and auth state flow through the mounted host `~/.claude` and `~/.claude.json`
-- Codex usage and auth state flow through the mounted host `~/.codex`
+- Claude Code usage and config state flow through the mounted host `~/.claude` and `~/.claude.json`, but unattended container auth should use an API key or helper
+- Codex usage and config state flow through the mounted host `~/.codex`, but unattended container auth is still more deterministic with an API key or helper
 - Non-`github.com` hosts can inherit a proxy URL from `AGENT_RUNNER_GITHUB_PROXY_URL`
 - Detached jobs run in a background helper process; one active job is enforced through an app-level lock file

@@ -2,13 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
-import type { JobRecord } from '../shared/types.js';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import type { AgentResult, JobRecord } from '../shared/types.js';
 import type { RuntimeConfig } from '../server/config.js';
+import type { DockerRunRequest } from '../server/docker-runner.js';
+import { pathExists } from '../server/fs-utils.js';
 import { JobStore } from '../server/job-store.js';
 import { JobEvents } from '../server/job-events.js';
 import { JobManager } from '../server/job-manager.js';
 import { AgentAdapters } from '../server/agent-adapters.js';
+
+const AUTH_ENV_KEYS = [
+  'ANTHROPIC_API_KEY',
+  'OPENAI_API_KEY',
+  'AGENT_RUNNER_ANTHROPIC_KEY_HELPER',
+  'AGENT_RUNNER_OPENAI_KEY_HELPER',
+] as const;
 
 class MockGitManager {
   public changedFiles = [ ' M src/index.ts' ];
@@ -30,20 +39,23 @@ class MockGitManager {
 
 class MockDockerRunner {
   public stoppedContainerId: string | null = null;
-  public pendingResolve: (() => void) | null = null;
+  public lastEnv: Record<string, string> | null = null;
+  public runCount = 0;
+  public ensureImageBuiltCount = 0;
 
-  async ensureImageBuilt(): Promise<void> {}
+  async ensureImageBuilt(): Promise<void> {
+    this.ensureImageBuiltCount += 1;
+  }
 
-  async runJob(request: {
-    job: JobRecord;
-    onStart?: (containerId: string) => Promise<void> | void;
-    onLog: (chunk: string) => Promise<void> | void;
-  }): Promise<{ containerId: string; exitCode: number }> {
+  async runJob(request: DockerRunRequest): Promise<{ containerId: string; exitCode: number }> {
+    this.runCount += 1;
+    this.lastEnv = { ...request.env };
     await request.onStart?.('container-123');
     await request.onLog('starting\n');
     await writeFile(request.job.artifacts.finalResponsePath, JSON.stringify({
       status: 'completed',
       summary: 'done',
+      blockerReason: null,
     }), 'utf8');
     return {
       containerId: 'container-123',
@@ -53,7 +65,6 @@ class MockDockerRunner {
 
   async stopJob(containerId: string): Promise<void> {
     this.stoppedContainerId = containerId;
-    this.pendingResolve?.();
   }
 
   createDebugCommand(record: JobRecord): string {
@@ -64,11 +75,11 @@ class MockDockerRunner {
 }
 
 class BlockingDockerRunner extends MockDockerRunner {
-  override async runJob(request: {
-    job: JobRecord;
-    onStart?: (containerId: string) => Promise<void> | void;
-    onLog: (chunk: string) => Promise<void> | void;
-  }): Promise<{ containerId: string; exitCode: number }> {
+  private pendingResolve: (() => void) | null = null;
+
+  override async runJob(request: DockerRunRequest): Promise<{ containerId: string; exitCode: number }> {
+    this.runCount += 1;
+    this.lastEnv = { ...request.env };
     await request.onStart?.('container-blocking');
     await request.onLog('running\n');
     await new Promise<void>((resolve) => {
@@ -77,6 +88,46 @@ class BlockingDockerRunner extends MockDockerRunner {
     return {
       containerId: 'container-blocking',
       exitCode: 137,
+    };
+  }
+
+  override async stopJob(containerId: string): Promise<void> {
+    await super.stopJob(containerId);
+    this.pendingResolve?.();
+  }
+}
+
+class ScriptedDockerRunner extends MockDockerRunner {
+  constructor(
+    private readonly chunks: string[],
+    private readonly result: AgentResult | null,
+    private readonly exitCode = 0,
+  ) {
+    super();
+  }
+
+  override async runJob(request: DockerRunRequest): Promise<{ containerId: string; exitCode: number }> {
+    this.runCount += 1;
+    this.lastEnv = { ...request.env };
+    await request.onStart?.('container-scripted');
+
+    for (const chunk of this.chunks) {
+      await request.onLog(chunk);
+      if (this.stoppedContainerId) {
+        return {
+          containerId: 'container-scripted',
+          exitCode: 137,
+        };
+      }
+    }
+
+    if (this.result) {
+      await writeFile(request.job.artifacts.finalResponsePath, JSON.stringify(this.result), 'utf8');
+    }
+
+    return {
+      containerId: 'container-scripted',
+      exitCode: this.exitCode,
     };
   }
 }
@@ -99,6 +150,27 @@ function createRuntimeConfig(root: string): RuntimeConfig {
     workerImageTag: 'agent-runner-worker:latest',
     sourceRoot: path.resolve(new URL('../..', import.meta.url).pathname),
   };
+}
+
+function clearAuthEnv(): void {
+  for (const key of AUTH_ENV_KEYS) {
+    delete process.env[key];
+  }
+}
+
+function createManager(config: RuntimeConfig, docker: MockDockerRunner): { manager: JobManager; store: JobStore } {
+  const store = new JobStore(config);
+  const manager = new JobManager(
+    config,
+    store,
+    new JobEvents(),
+    new MockGitManager() as never,
+    docker as never,
+    new AgentAdapters(),
+    { runMode: 'inline' },
+  );
+
+  return { manager, store };
 }
 
 async function waitForJob(
@@ -127,66 +199,210 @@ async function waitForJobWithContainer(store: JobStore, jobId: string): Promise<
   throw new Error('Timed out waiting for container assignment');
 }
 
-test('job manager processes a job through completion and writes commit metadata', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-jobs-'));
-  const config = createRuntimeConfig(root);
-  const store = new JobStore(config);
-  const events = new JobEvents();
-  const git = new MockGitManager();
-  const docker = new MockDockerRunner();
-  const manager = new JobManager(config, store, events, git as never, docker as never, new AgentAdapters(), {
-    runMode: 'inline',
-  });
-
-  process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
-
-  const job = await manager.createJob({
+async function createJob(manager: JobManager, agentRuntime: 'claude' | 'codex'): Promise<JobRecord> {
+  return await manager.createJob({
     repoUrl: 'git@github.com:owner/repo.git',
     specPath: 'agent-os/specs/example',
-    agentRuntime: 'claude',
+    agentRuntime,
     effort: 'auto',
     githubHost: 'github.com',
     commitOnStop: true,
     wpEnvEnabled: true,
   });
+}
 
+test('job manager processes a claude job through completion with direct env auth', async () => {
+  clearAuthEnv();
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-jobs-'));
+  const docker = new MockDockerRunner();
+  const { manager, store } = createManager(createRuntimeConfig(root), docker);
+
+  const job = await createJob(manager, 'claude');
   const finished = await waitForJob(store, job.id, [ 'completed' ]);
+
   assert.equal(finished.status, 'completed');
   assert.equal(finished.containerId, 'container-123');
+  assert.equal(docker.lastEnv?.ANTHROPIC_API_KEY, 'test-anthropic-key');
   assert.match(finished.debugCommand ?? '', /docker exec -it container-123 bash/);
   assert.equal(finished.headSha, 'abc123');
   assert.equal(finished.resolvedSpec?.specMode, 'bundle');
   assert.deepEqual(finished.resolvedSpec?.specFiles, [ '/spec/plan.md', '/spec/shape.md' ]);
+
+  clearAuthEnv();
 });
 
-test('cancelJob stops the active container and keeps canceled state', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-cancel-'));
-  const config = createRuntimeConfig(root);
-  const store = new JobStore(config);
-  const events = new JobEvents();
-  const git = new MockGitManager();
-  const docker = new BlockingDockerRunner();
-  const manager = new JobManager(config, store, events, git as never, docker as never, new AgentAdapters(), {
-    runMode: 'inline',
-  });
+test('helper auth is used when direct claude env is absent and secrets are not logged', async () => {
+  clearAuthEnv();
+  process.env.AGENT_RUNNER_ANTHROPIC_KEY_HELPER = 'printf helper-anthropic-key';
 
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-helper-'));
+  const docker = new MockDockerRunner();
+  const { manager, store } = createManager(createRuntimeConfig(root), docker);
+
+  const job = await createJob(manager, 'claude');
+  const finished = await waitForJob(store, job.id, [ 'completed' ]);
+  const log = await readFile(finished.artifacts.logPath, 'utf8');
+
+  assert.equal(finished.status, 'completed');
+  assert.equal(docker.lastEnv?.ANTHROPIC_API_KEY, 'helper-anthropic-key');
+  assert.doesNotMatch(log, /helper-anthropic-key/);
+
+  clearAuthEnv();
+});
+
+test('direct env auth takes precedence over a failing helper', async () => {
+  clearAuthEnv();
+  process.env.ANTHROPIC_API_KEY = 'preferred-anthropic-key';
+  process.env.AGENT_RUNNER_ANTHROPIC_KEY_HELPER = 'exit 9';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-helper-precedence-'));
+  const docker = new MockDockerRunner();
+  const { manager, store } = createManager(createRuntimeConfig(root), docker);
+
+  const job = await createJob(manager, 'claude');
+  const finished = await waitForJob(store, job.id, [ 'completed' ]);
+
+  assert.equal(finished.status, 'completed');
+  assert.equal(docker.lastEnv?.ANTHROPIC_API_KEY, 'preferred-anthropic-key');
+
+  clearAuthEnv();
+});
+
+test('claude jobs fail before docker launch when no auth is available', async () => {
+  clearAuthEnv();
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-no-claude-auth-'));
+  const docker = new MockDockerRunner();
+  const { manager } = createManager(createRuntimeConfig(root), docker);
+
+  const job = await createJob(manager, 'claude');
+  const log = await readFile(job.artifacts.logPath, 'utf8');
+
+  assert.equal(job.status, 'failed');
+  assert.match(job.blockerReason ?? '', /ANTHROPIC_API_KEY/);
+  assert.equal(docker.ensureImageBuiltCount, 0);
+  assert.equal(docker.runCount, 0);
+  assert.match(log, /ANTHROPIC_API_KEY/);
+});
+
+test('claude jobs fail before docker launch when helper returns no usable key', async () => {
+  clearAuthEnv();
+  process.env.AGENT_RUNNER_ANTHROPIC_KEY_HELPER = 'printf ""';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-empty-helper-'));
+  const docker = new MockDockerRunner();
+  const { manager } = createManager(createRuntimeConfig(root), docker);
+
+  const job = await createJob(manager, 'claude');
+
+  assert.equal(job.status, 'failed');
+  assert.equal(docker.runCount, 0);
+
+  clearAuthEnv();
+});
+
+test('codex jobs can use mounted local state when OPENAI_API_KEY is absent', async () => {
+  clearAuthEnv();
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-codex-fallback-'));
+  const config = createRuntimeConfig(root);
+  await mkdir(config.codexDir, { recursive: true });
+  await writeFile(path.join(config.codexDir, 'auth.json'), '{}', 'utf8');
+
+  const docker = new MockDockerRunner();
+  const { manager, store } = createManager(config, docker);
+
+  const job = await createJob(manager, 'codex');
+  const finished = await waitForJob(store, job.id, [ 'completed' ]);
+
+  assert.equal(finished.status, 'completed');
+  assert.equal(docker.lastEnv?.OPENAI_API_KEY, undefined);
+});
+
+test('codex jobs fail before docker launch when key and fallback auth are both unavailable', async () => {
+  clearAuthEnv();
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-no-codex-auth-'));
+  const docker = new MockDockerRunner();
+  const { manager } = createManager(createRuntimeConfig(root), docker);
+
+  const job = await createJob(manager, 'codex');
+
+  assert.equal(job.status, 'failed');
+  assert.match(job.blockerReason ?? '', /OPENAI_API_KEY/);
+  assert.equal(docker.runCount, 0);
+});
+
+test('repeated claude auth failures with no meaningful output stop the container and fail the job', async () => {
+  clearAuthEnv();
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-auth-loop-'));
+  const docker = new ScriptedDockerRunner([
+    'authentication_failed\n',
+    'Please run /login\n',
+    'Not logged in\n',
+  ], null, 137);
+  const { manager, store } = createManager(createRuntimeConfig(root), docker);
+
+  const job = await createJob(manager, 'claude');
+  const failed = await waitForJob(store, job.id, [ 'failed' ]);
+  const log = await readFile(failed.artifacts.logPath, 'utf8');
+
+  assert.equal(docker.stoppedContainerId, 'container-scripted');
+  assert.match(failed.blockerReason ?? '', /infinite auth loop/i);
+  assert.match(log, /infinite auth loop/i);
+
+  clearAuthEnv();
+});
+
+test('auth errors after meaningful output do not trigger the loop abort', async () => {
+  clearAuthEnv();
   process.env.OPENAI_API_KEY = 'test-openai-key';
 
-  const job = await manager.createJob({
-    repoUrl: 'git@github.com:owner/repo.git',
-    specPath: 'agent-os/specs/example',
-    agentRuntime: 'codex',
-    effort: 'auto',
-    githubHost: 'github.com',
-    commitOnStop: true,
-    wpEnvEnabled: true,
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-auth-noise-'));
+  const docker = new ScriptedDockerRunner([
+    'Planning change set\n',
+    '401 Unauthorized\n',
+    'Please run codex --login\n',
+    'OPENAI_API_KEY\n',
+  ], {
+    status: 'completed',
+    summary: 'done',
   });
+  const { manager, store } = createManager(createRuntimeConfig(root), docker);
 
+  const job = await createJob(manager, 'codex');
+  const finished = await waitForJob(store, job.id, [ 'completed' ]);
+
+  assert.equal(finished.status, 'completed');
+  assert.equal(docker.stoppedContainerId, null);
+
+  clearAuthEnv();
+});
+
+test('cancelJob stops the active container, keeps canceled state, and removes the active lock', async () => {
+  clearAuthEnv();
+  process.env.OPENAI_API_KEY = 'test-openai-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-cancel-'));
+  const config = createRuntimeConfig(root);
+  const docker = new BlockingDockerRunner();
+  const { manager, store } = createManager(config, docker);
+
+  const job = await createJob(manager, 'codex');
   const running = await waitForJobWithContainer(store, job.id);
   assert.equal(running.containerId, 'container-blocking');
+  assert.equal(await pathExists(path.join(config.appDir, 'active-job.lock')), true);
 
   const canceled = await manager.cancelJob(job.id);
+
   assert.ok(canceled);
   assert.equal(canceled.status, 'canceled');
   assert.equal(docker.stoppedContainerId, 'container-blocking');
+  assert.equal(await pathExists(path.join(config.appDir, 'active-job.lock')), false);
+
+  clearAuthEnv();
 });
