@@ -19,7 +19,12 @@ export class JobStore {
     if (!raw) {
       return null;
     }
-    return JobRecordSchema.parse(raw);
+    const normalized = normalizeLegacyJobRecord(raw);
+    const parsed = JobRecordSchema.parse(normalized.record);
+    if (normalized.changed) {
+      await this.save(parsed);
+    }
+    return parsed;
   }
 
   async list(): Promise<JobRecord[]> {
@@ -27,7 +32,13 @@ export class JobStore {
     const records = await Promise.all(
       items
         .filter((item) => item.isDirectory())
-        .map((item) => this.get(item.name))
+        .map(async (item) => {
+          try {
+            return await this.get(item.name);
+          } catch {
+            return null;
+          }
+        })
     );
     return records
       .filter((record): record is JobRecord => Boolean(record))
@@ -35,3 +46,34 @@ export class JobStore {
   }
 }
 
+function normalizeLegacyJobRecord(raw: unknown): { record: unknown; changed: boolean } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { record: raw, changed: false };
+  }
+
+  const record = raw as Record<string, unknown>;
+  const artifacts = record.artifacts;
+  if (!artifacts || typeof artifacts !== 'object' || Array.isArray(artifacts)) {
+    return { record: raw, changed: false };
+  }
+
+  const artifactRecord = artifacts as Record<string, unknown>;
+  if (typeof artifactRecord.debugLogPath === 'string' && artifactRecord.debugLogPath.length > 0) {
+    return { record: raw, changed: false };
+  }
+
+  if (typeof artifactRecord.logPath !== 'string' || artifactRecord.logPath.length === 0) {
+    return { record: raw, changed: false };
+  }
+
+  return {
+    changed: true,
+    record: {
+      ...record,
+      artifacts: {
+        ...artifactRecord,
+        debugLogPath: path.join(path.dirname(artifactRecord.logPath), 'debug.log'),
+      },
+    },
+  };
+}

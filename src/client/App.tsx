@@ -116,14 +116,27 @@ export function App(): ReactElement {
   }, [selectedJob?.id, logKind]);
 
   async function refreshJobs(): Promise<void> {
-    const response = await fetch('/api/jobs');
-    const nextJobs = await response.json() as JobRecord[];
-    startTransition(() => {
-      setJobs(nextJobs);
-      if (!selectedJobId && nextJobs[0]) {
-        setSelectedJobId(nextJobs[0].id);
+    try {
+      const response = await fetch('/api/jobs');
+      const payload = await response.json() as unknown;
+      if (!response.ok) {
+        const failure = payload as { error?: string };
+        throw new Error(failure.error ?? 'Failed to load jobs');
       }
-    });
+      if (!Array.isArray(payload)) {
+        throw new Error('Invalid jobs response');
+      }
+
+      const nextJobs = payload as JobRecord[];
+      startTransition(() => {
+        setJobs(nextJobs);
+        if (!selectedJobId && nextJobs[0]) {
+          setSelectedJobId(nextJobs[0].id);
+        }
+      });
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : 'Failed to load jobs');
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -358,10 +371,10 @@ export function App(): ReactElement {
                     <div>
                       <dt>Artifacts</dt>
                       <dd className="artifact-links">
-                        <a href={artifactUrl(selectedJob.id, selectedJob.artifacts.summaryPath)} target="_blank" rel="noreferrer">summary</a>
-                        <a href={artifactUrl(selectedJob.id, selectedJob.artifacts.gitDiffPath)} target="_blank" rel="noreferrer">git diff</a>
-                        <a href={artifactUrl(selectedJob.id, selectedJob.artifacts.debugLogPath)} target="_blank" rel="noreferrer">debug log</a>
-                        <a href={artifactUrl(selectedJob.id, selectedJob.artifacts.agentTranscriptPath)} target="_blank" rel="noreferrer">transcript</a>
+                        {renderArtifactLink(selectedJob.id, selectedJob.artifacts.summaryPath, 'summary')}
+                        {renderArtifactLink(selectedJob.id, selectedJob.artifacts.gitDiffPath, 'git diff')}
+                        {renderArtifactLink(selectedJob.id, selectedJob.artifacts.debugLogPath, 'debug log')}
+                        {renderArtifactLink(selectedJob.id, selectedJob.artifacts.agentTranscriptPath, 'transcript')}
                       </dd>
                     </div>
                     {selectedJob.blockerReason ? (
@@ -409,7 +422,19 @@ export function App(): ReactElement {
   );
 }
 
-function artifactUrl(jobId: string, absolutePath: string): string {
+function artifactUrl(jobId: string, absolutePath?: string): string | null {
+  if (!absolutePath) {
+    return null;
+  }
   const filename = absolutePath.split('/').pop();
-  return `/artifacts/${jobId}/${filename}`;
+  return filename ? `/artifacts/${jobId}/${filename}` : null;
+}
+
+function renderArtifactLink(jobId: string, absolutePath: string | undefined, label: string): ReactElement | null {
+  const href = artifactUrl(jobId, absolutePath);
+  if (!href) {
+    return null;
+  }
+
+  return <a href={href} target="_blank" rel="noreferrer">{label}</a>;
 }
