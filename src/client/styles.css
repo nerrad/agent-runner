@@ -129,6 +129,8 @@ select {
   display: flex;
   flex-direction: column;
   max-height: min(70vh, 48rem);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .panel-header h2 {
@@ -187,7 +189,10 @@ select {
   position: relative;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  padding-right: 0.35rem;
+  padding-bottom: 2rem;
+  scrollbar-gutter: stable;
 }
 
 .jobs-scroll::after {
@@ -204,11 +209,6 @@ select {
 .jobs-list {
   display: grid;
   gap: 0.8rem;
-  max-height: 100%;
-  overflow-y: auto;
-  padding-right: 0.35rem;
-  padding-bottom: 2rem;
-  scrollbar-gutter: stable;
 }
 
 .job-card {
