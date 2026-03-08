@@ -17,10 +17,13 @@ import { stageSpecBundle } from './spec-resolver.js';
 import { JobStore } from './job-store.js';
 
 const TERMINAL_STATUSES = new Set<JobStatus>([ 'blocked', 'completed', 'failed', 'canceled' ]);
+const RUNNER_LOG_PREFIX = '[agent-runner]';
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 
 export interface JobManagerOptions {
   runMode?: 'inline' | 'process';
   launchJobRunner?: (jobId: string) => Promise<void>;
+  heartbeatIntervalMs?: number;
 }
 
 interface JobLockPayload {
@@ -40,10 +43,21 @@ interface AuthLoopState {
   blockerReason?: string;
 }
 
+interface LogTarget {
+  id: string;
+  artifacts: JobRecord['artifacts'];
+}
+
+interface IdleHeartbeat {
+  markAgentOutput(): void;
+  stop(): void;
+}
+
 export class JobManager {
   private readonly activeLockPath: string;
   private readonly runMode: 'inline' | 'process';
   private readonly launchJobRunner: (jobId: string) => Promise<void>;
+  private readonly heartbeatIntervalMs: number;
 
   constructor(
     private readonly config: RuntimeConfig,
@@ -57,6 +71,7 @@ export class JobManager {
     this.activeLockPath = path.join(this.config.appDir, 'active-job.lock');
     this.runMode = options.runMode ?? 'process';
     this.launchJobRunner = options.launchJobRunner ?? ((jobId) => launchDetachedJobRunner(this.config, jobId));
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
   }
 
   async createJob(input: JobSpec): Promise<JobRecord> {
@@ -92,6 +107,7 @@ export class JobManager {
       };
       await this.store.save(failedRecord);
       this.events.emitRecord(failedRecord);
+      await this.appendRunnerLogLine(failedRecord, 'job failed');
       return failedRecord;
     }
 
@@ -180,6 +196,10 @@ export class JobManager {
 
   private async executeJob(jobId: string): Promise<void> {
     let record = await this.requireJob(jobId);
+    const logTarget: LogTarget = {
+      id: record.id,
+      artifacts: record.artifacts,
+    };
     const profile = createGitHostProfile(this.config, record.spec.githubHost);
     const runtimeAuth = await this.resolveRuntimeAuth(record.spec.agentRuntime);
     const runtimeEnv: Record<string, string> = runtimeAuth.ok ? { ...runtimeAuth.value.env } : {};
@@ -192,7 +212,7 @@ export class JobManager {
     await writeFile(record.artifacts.agentTranscriptPath, '', 'utf8');
 
     if (!runtimeAuth.ok) {
-      await appendFile(record.artifacts.logPath, `${runtimeAuth.message}\n`, 'utf8');
+      await this.appendLogLine(logTarget, runtimeAuth.message);
       await this.updateRecord(record, {
         status: 'failed',
         endedAt: new Date().toISOString(),
@@ -205,6 +225,7 @@ export class JobManager {
       status: 'cloning',
       startedAt: new Date().toISOString(),
     });
+    await this.appendRunnerLogLine(logTarget, 'cloning repository');
 
     await safeRemove(record.workspacePath);
     await ensureDir(path.dirname(record.workspacePath));
@@ -217,6 +238,7 @@ export class JobManager {
     record = await this.updateRecord(record, {
       status: 'bootstrapping',
     });
+    await this.appendRunnerLogLine(logTarget, 'bootstrapping workspace and staging spec bundle');
 
     const stagedSpec = await stageSpecBundle(record.workspacePath, record.spec.specPath, record.artifacts.specBundlePath);
     record = await this.updateRecord(record, {
@@ -224,41 +246,49 @@ export class JobManager {
     });
 
     const prepared = await this.adapters.prepare(record);
+    await this.appendRunnerLogLine(logTarget, 'building worker image and launching agent');
     await this.docker.ensureImageBuilt();
 
     record = await this.updateRecord(record, {
       status: 'running',
     });
+    const heartbeat = this.startIdleHeartbeat(logTarget);
 
     const authLoopState: AuthLoopState = {
       authFailureCount: 0,
       meaningfulOutputSeen: false,
       abortRequested: false,
     };
-    const runtimePolicy = this.adapters.runtimeAuthPolicy(record.spec.agentRuntime);
 
-    const dockerResult = await this.docker.runJob({
-      job: record,
-      command: prepared.command,
-      env: runtimeEnv,
-      onStart: async (containerId) => {
-        record = await this.updateRecord(record, {
-          containerId,
-          debugCommand: this.docker.createDebugCommand({ ...record, containerId }),
-        });
-      },
-      onLog: async (chunk) => {
-        await appendFile(record.artifacts.logPath, chunk, 'utf8');
-        await this.docker.appendTranscript(record.artifacts.agentTranscriptPath, chunk);
-        this.events.emitLog({
-          jobId: record.id,
-          chunk,
-          at: new Date().toISOString(),
-        });
+    let dockerResult: { containerId: string; exitCode: number };
+    try {
+      dockerResult = await this.docker.runJob({
+        job: record,
+        command: prepared.command,
+        env: runtimeEnv,
+        onStart: async (containerId) => {
+          record = await this.updateRecord(record, {
+            containerId,
+            debugCommand: this.docker.createDebugCommand({ ...record, containerId }),
+          });
+          await this.appendRunnerLogLine(logTarget, `container started: ${containerId}`);
+        },
+        onLog: async (chunk) => {
+          heartbeat.markAgentOutput();
+          await appendFile(record.artifacts.logPath, chunk, 'utf8');
+          await this.docker.appendTranscript(record.artifacts.agentTranscriptPath, chunk);
+          this.events.emitLog({
+            jobId: record.id,
+            chunk,
+            at: new Date().toISOString(),
+          });
 
-        await this.observeRuntimeLog(record, chunk, authLoopState);
-      },
-    });
+          await this.observeRuntimeLog(record, chunk, authLoopState);
+        },
+      });
+    } finally {
+      heartbeat.stop();
+    }
 
     const latestRecord = await this.requireJob(record.id);
     if (latestRecord.status === 'canceled') {
@@ -284,7 +314,7 @@ export class JobManager {
       agentResult = AgentResultSchema.parse(parsed);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await appendFile(record.artifacts.logPath, `\nFailed to parse agent result: ${message}\n`, 'utf8');
+      await this.appendLogLine(logTarget, `Failed to parse agent result: ${message}`);
     }
 
     const changedFiles = await this.git.getChangedFiles(record.workspacePath);
@@ -432,7 +462,7 @@ export class JobManager {
 
     state.abortRequested = true;
     state.blockerReason = policy.authLoopMessage;
-    await appendFile(record.artifacts.logPath, `${policy.authLoopMessage}\n`, 'utf8');
+    await this.appendLogLine(record, policy.authLoopMessage);
 
     if (record.containerId) {
       await this.docker.stopJob(record.containerId);
@@ -549,6 +579,77 @@ export class JobManager {
     };
     await this.store.save(next);
     this.events.emitRecord(next);
+    if (!TERMINAL_STATUSES.has(record.status) && TERMINAL_STATUSES.has(next.status)) {
+      await this.appendRunnerLogLine(next, `job ${next.status}`);
+    }
     return next;
+  }
+
+  private async appendLogLine(target: LogTarget, line: string): Promise<void> {
+    const chunk = `${line}\n`;
+    await appendFile(target.artifacts.logPath, chunk, 'utf8');
+    this.events.emitLog({
+      jobId: target.id,
+      chunk,
+      at: new Date().toISOString(),
+    });
+  }
+
+  private async appendRunnerLogLine(target: LogTarget, message: string): Promise<void> {
+    await this.appendLogLine(target, `${RUNNER_LOG_PREFIX} ${message}`);
+  }
+
+  private startIdleHeartbeat(target: LogTarget): IdleHeartbeat {
+    let timer: NodeJS.Timeout | null = null;
+    let stopped = false;
+    let generation = 0;
+
+    const schedule = (): void => {
+      generation += 1;
+      const expectedGeneration = generation;
+      if (timer) {
+        clearTimeout(timer);
+      }
+      timer = setTimeout(() => {
+        void (async () => {
+          if (stopped || generation !== expectedGeneration) {
+            return;
+          }
+
+          const latest = await this.store.get(target.id);
+          if (!latest || latest.status !== 'running') {
+            stopped = true;
+            return;
+          }
+
+          await this.appendRunnerLogLine(target, 'still running; waiting for agent output');
+
+          if (!stopped && generation === expectedGeneration) {
+            schedule();
+          }
+        })().catch(() => {
+          stopped = true;
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
+          }
+        });
+      }, this.heartbeatIntervalMs);
+    };
+
+    schedule();
+
+    return {
+      markAgentOutput: () => {
+        schedule();
+      },
+      stop: () => {
+        stopped = true;
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+      },
+    };
   }
 }

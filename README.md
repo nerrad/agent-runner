@@ -97,7 +97,14 @@ Prompt contract:
 - start from `/spec/plan.md`
 - consult `/spec/shape.md`, `/spec/standards.md`, `/spec/references.md`, and `/spec/visuals` only when relevant
 - work until complete or hard blocked
+- emit terse single-line best-effort progress updates prefixed with `[progress]` before major task switches, long-running commands, and likely silent stretches
 - return JSON only, matching the staged schema
+
+Live log behavior:
+
+- agent-runner writes runner-authored lifecycle markers prefixed with `[agent-runner]` when cloning begins, bootstrapping begins, the worker/agent launch begins, the container starts, and the job reaches a terminal state
+- while a job is `running`, agent-runner also emits `[agent-runner] still running; waiting for agent output` after a silent interval with no agent stdout/stderr
+- best-effort agent progress lines prefixed with `[progress]` are log-only and do not change the final JSON result contract
 
 ## Authentication
 
@@ -217,7 +224,7 @@ Job detail shows:
 - requested model and effort
 - resolved spec mode (`bundle` or `file`)
 - detected staged spec files
-- branch, SHA, workspace, debug attach command, and live logs
+- branch, SHA, workspace, debug attach command, and live logs with runner lifecycle markers plus best-effort agent progress lines
 
 ## Skills
 

@@ -9,6 +9,7 @@ import type { DockerRunRequest } from '../server/docker-runner.js';
 import { pathExists } from '../server/fs-utils.js';
 import { JobStore } from '../server/job-store.js';
 import { JobEvents } from '../server/job-events.js';
+import type { JobManagerOptions } from '../server/job-manager.js';
 import { JobManager } from '../server/job-manager.js';
 import { AgentAdapters } from '../server/agent-adapters.js';
 
@@ -132,6 +133,51 @@ class ScriptedDockerRunner extends MockDockerRunner {
   }
 }
 
+class SilentDockerRunner extends MockDockerRunner {
+  constructor(private readonly delayMs: number) {
+    super();
+  }
+
+  override async runJob(request: DockerRunRequest): Promise<{ containerId: string; exitCode: number }> {
+    this.runCount += 1;
+    this.lastEnv = { ...request.env };
+    await request.onStart?.('container-silent');
+    await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+    await writeFile(request.job.artifacts.finalResponsePath, JSON.stringify({
+      status: 'completed',
+      summary: 'done',
+      blockerReason: null,
+    }), 'utf8');
+    return {
+      containerId: 'container-silent',
+      exitCode: 0,
+    };
+  }
+}
+
+class SingleOutputThenSilentDockerRunner extends MockDockerRunner {
+  constructor(private readonly delayMs: number) {
+    super();
+  }
+
+  override async runJob(request: DockerRunRequest): Promise<{ containerId: string; exitCode: number }> {
+    this.runCount += 1;
+    this.lastEnv = { ...request.env };
+    await request.onStart?.('container-one-output');
+    await request.onLog('initial output\n');
+    await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+    await writeFile(request.job.artifacts.finalResponsePath, JSON.stringify({
+      status: 'completed',
+      summary: 'done',
+      blockerReason: null,
+    }), 'utf8');
+    return {
+      containerId: 'container-one-output',
+      exitCode: 0,
+    };
+  }
+}
+
 function createRuntimeConfig(root: string): RuntimeConfig {
   return {
     appDir: root,
@@ -158,7 +204,11 @@ function clearAuthEnv(): void {
   }
 }
 
-function createManager(config: RuntimeConfig, docker: MockDockerRunner): { manager: JobManager; store: JobStore } {
+function createManager(
+  config: RuntimeConfig,
+  docker: MockDockerRunner,
+  options: JobManagerOptions = {},
+): { manager: JobManager; store: JobStore } {
   const store = new JobStore(config);
   const manager = new JobManager(
     config,
@@ -167,7 +217,10 @@ function createManager(config: RuntimeConfig, docker: MockDockerRunner): { manag
     new MockGitManager() as never,
     docker as never,
     new AgentAdapters(),
-    { runMode: 'inline' },
+    {
+      runMode: 'inline',
+      ...options,
+    },
   );
 
   return { manager, store };
@@ -221,6 +274,7 @@ test('job manager processes a claude job through completion with direct env auth
 
   const job = await createJob(manager, 'claude');
   const finished = await waitForJob(store, job.id, [ 'completed' ]);
+  const log = await readFile(finished.artifacts.logPath, 'utf8');
 
   assert.equal(finished.status, 'completed');
   assert.equal(finished.containerId, 'container-123');
@@ -229,6 +283,11 @@ test('job manager processes a claude job through completion with direct env auth
   assert.equal(finished.headSha, 'abc123');
   assert.equal(finished.resolvedSpec?.specMode, 'bundle');
   assert.deepEqual(finished.resolvedSpec?.specFiles, [ '/spec/plan.md', '/spec/shape.md' ]);
+  assert.match(log, /\[agent-runner\] cloning repository/);
+  assert.match(log, /\[agent-runner\] bootstrapping workspace and staging spec bundle/);
+  assert.match(log, /\[agent-runner\] building worker image and launching agent/);
+  assert.match(log, /\[agent-runner\] container started: container-123/);
+  assert.match(log, /\[agent-runner\] job completed/);
 
   clearAuthEnv();
 });
@@ -398,11 +457,59 @@ test('cancelJob stops the active container, keeps canceled state, and removes th
   assert.equal(await pathExists(path.join(config.appDir, 'active-job.lock')), true);
 
   const canceled = await manager.cancelJob(job.id);
+  const log = await readFile(job.artifacts.logPath, 'utf8');
 
   assert.ok(canceled);
   assert.equal(canceled.status, 'canceled');
   assert.equal(docker.stoppedContainerId, 'container-blocking');
   assert.equal(await pathExists(path.join(config.appDir, 'active-job.lock')), false);
+  assert.match(log, /\[agent-runner\] job canceled/);
+
+  clearAuthEnv();
+});
+
+test('silent runs emit idle heartbeats and stop after the final runner annotation', async () => {
+  clearAuthEnv();
+  process.env.OPENAI_API_KEY = 'test-openai-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-heartbeat-'));
+  const docker = new SilentDockerRunner(80);
+  const { manager, store } = createManager(createRuntimeConfig(root), docker, {
+    heartbeatIntervalMs: 20,
+  });
+
+  const job = await createJob(manager, 'codex');
+  const finished = await waitForJob(store, job.id, [ 'completed' ]);
+  const log = await readFile(finished.artifacts.logPath, 'utf8');
+  const heartbeatMatches = log.match(/\[agent-runner\] still running; waiting for agent output/g) ?? [];
+  const finalMatches = log.match(/\[agent-runner\] job completed/g) ?? [];
+  const finalIndex = log.lastIndexOf('[agent-runner] job completed');
+  const trailingLog = log.slice(finalIndex);
+
+  assert.equal(finished.status, 'completed');
+  assert.ok(heartbeatMatches.length >= 1);
+  assert.equal(finalMatches.length, 1);
+  assert.doesNotMatch(trailingLog, /still running; waiting for agent output/);
+
+  clearAuthEnv();
+});
+
+test('idle heartbeat is scheduled from the last agent output, not the start of the run', async () => {
+  clearAuthEnv();
+  process.env.OPENAI_API_KEY = 'test-openai-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-heartbeat-after-output-'));
+  const docker = new SingleOutputThenSilentDockerRunner(50);
+  const { manager, store } = createManager(createRuntimeConfig(root), docker, {
+    heartbeatIntervalMs: 20,
+  });
+
+  const job = await createJob(manager, 'codex');
+  const finished = await waitForJob(store, job.id, [ 'completed' ]);
+  const log = await readFile(finished.artifacts.logPath, 'utf8');
+
+  assert.match(log, /initial output/);
+  assert.match(log, /\[agent-runner\] still running; waiting for agent output/);
 
   clearAuthEnv();
 });

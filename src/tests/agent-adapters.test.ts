@@ -61,6 +61,9 @@ test('prepare codex run writes prompt/schema and uses exec mode', async () => {
   assert.match(prompt, /Effort preference: high/);
   assert.match(prompt, /Start with \/spec\/plan\.md/);
   assert.match(prompt, /Read \/spec\/shape\.md/);
+  assert.match(prompt, /Progress reporting:/);
+  assert.match(prompt, /prefixed with \[progress\]/);
+  assert.match(prompt, /before long-running commands, tests, or builds/);
   assert.match(schema, /"completed"/);
   assert.match(schema, /"blockerReason"/);
   assert.match(schema, /"null"/);

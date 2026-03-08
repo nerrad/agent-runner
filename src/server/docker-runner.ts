@@ -39,7 +39,6 @@ export class DockerRunner {
     }
 
     const containerId = runResult.stdout.trim();
-    await request.onLog(`Started container ${containerId}\n`);
     await request.onStart?.(containerId);
 
     const logPromise = runCommand('docker', [ 'logs', '--follow', containerId ], {
