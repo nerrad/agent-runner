@@ -166,16 +166,16 @@ function requireHost(value: string): GitHubHost {
 
 export async function normalizeRunSpec(command: Extract<CliCommand, { command: 'run' }>, git = new GitManager()): Promise<NormalizedRunSpec> {
   if (looksLikeGitUrl(command.repo)) {
-    if (path.isAbsolute(command.spec)) {
-      throw new Error('Spec path must be repo-relative when --repo is a git URL');
-    }
+    const specPath = path.isAbsolute(command.spec)
+      ? await resolveAbsoluteSpecPath(command.spec)
+      : normalizeRelativePath(command.spec);
 
     return {
       repoSource: 'url',
       jobSpec: {
         repoUrl: command.repo,
         ref: command.ref,
-        specPath: normalizeRelativePath(command.spec),
+        specPath,
         agentRuntime: command.runtime,
         model: command.model,
         effort: command.effort,
@@ -208,10 +208,14 @@ export async function normalizeRunSpec(command: Extract<CliCommand, { command: '
   };
 }
 
+async function resolveAbsoluteSpecPath(spec: string): Promise<string> {
+  await assertExists(spec, '--spec');
+  return path.resolve(spec);
+}
+
 async function resolveSpecPath(spec: string, repoRoot: string): Promise<string> {
   if (path.isAbsolute(spec)) {
-    await assertExists(spec, '--spec');
-    return path.resolve(spec);
+    return await resolveAbsoluteSpecPath(spec);
   }
 
   const resolved = path.resolve(repoRoot, spec);

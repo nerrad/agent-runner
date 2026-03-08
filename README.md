@@ -60,6 +60,13 @@ Rules:
 - The worker always sees the staged bundle at `/spec`
 - `/spec/plan.md` is always the agent entrypoint
 
+Relative-path behavior:
+
+- If you pass an Agent OS spec directory, agent-runner copies that directory into `/spec`, so companion-file references inside the bundle keep working
+- If you pass a single file, agent-runner stages only that file as `/spec/plan.md`
+- Single-file mode is only safe for self-contained plans; relative references to sibling files next to that file are not copied automatically
+- Absolute host paths written inside the spec are not rewritten for the container
+
 ## How agents start in the container
 
 Each job stages runtime artifacts under `/artifacts` and starts the selected agent from `/workspace` inside the worker container.
@@ -177,7 +184,7 @@ agent-runner skills install [--force] [--claude-only] [--codex-only]
 Normalization rules:
 
 - If `--repo` is a local path, agent-runner resolves `remote.origin.url`, defaults `--ref` to the current branch, and converts in-repo spec paths to repo-relative form
-- If `--repo` is a git URL, `--spec` must be repo-relative
+- If `--repo` is a git URL, `--spec` may be repo-relative or an absolute path on the local machine
 - Local repo path support is only for launch convenience; execution still happens from a fresh clone
 - `--model` is optional and passed through to the selected runtime; if omitted, the runtime falls back to its mounted local config/default model
 - `--effort` defaults to `auto`; Claude uses its native `--effort` flag and Codex uses a config override in `exec` mode

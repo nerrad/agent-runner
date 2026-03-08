@@ -71,19 +71,23 @@ test('normalizeRunSpec converts a local repo path into a remote url and repo-rel
   assert.equal(normalized.jobSpec.effort, 'medium');
 });
 
-test('normalizeRunSpec rejects absolute spec paths for git URLs', async () => {
-  await assert.rejects(
-    () => normalizeRunSpec({
-      command: 'run',
-      repo: 'git@github.com:owner/repo.git',
-      spec: '/tmp/plan.md',
-      runtime: 'claude',
-      effort: 'auto',
-      host: 'github.com',
-      detach: false,
-    }),
-    /repo-relative/,
-  );
+test('normalizeRunSpec accepts absolute spec paths for git URLs', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-cli-abs-spec-'));
+  const planPath = path.join(root, 'external-plan.md');
+  await writeFile(planPath, '# External plan\n', 'utf8');
+
+  const normalized = await normalizeRunSpec({
+    command: 'run',
+    repo: 'git@github.com:owner/repo.git',
+    spec: planPath,
+    runtime: 'claude',
+    effort: 'auto',
+    host: 'github.com',
+    detach: false,
+  });
+
+  assert.equal(normalized.repoSource, 'url');
+  assert.equal(normalized.jobSpec.specPath, planPath);
 });
 
 test('resolveSkillTargetRoot maps Claude and Codex install roots', () => {

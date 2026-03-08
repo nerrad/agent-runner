@@ -20,6 +20,8 @@ Rules:
 - Prefer an Agent OS spec directory such as `agent-os/specs/<slug>/`.
 - A spec directory must include `plan.md`. `shape.md`, `standards.md`, `references.md`, and `visuals/` are optional.
 - Allow a single markdown plan file only as a fallback for non-Agent-OS workflows.
+- When the spec references companion files, use the spec directory, not a single file.
+- Single-file mode is only appropriate for self-contained plans.
 - Do not draft, revise, or expand the spec. Launch only from the existing inputs.
 - Prefer a local repo path when the current working directory is already the target repository.
 - Follow logs by default. Use `--detach` only when the user explicitly asks for detached execution.
@@ -32,5 +34,7 @@ agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--
 
 Behavior notes:
 - If `--repo` is a local git checkout, `agent-runner` resolves `remote.origin.url`, uses the current branch by default, and still executes from a fresh clone.
-- If `--repo` is a git URL, `--spec` must be repo-relative.
+- If `--repo` is a git URL, `--spec` may be repo-relative or an absolute path on the local machine.
+- Agent OS spec directories are staged into `/spec`, preserving companion-file layout.
+- Single-file specs are staged only as `/spec/plan.md`; sibling files are not copied automatically.
 - The worker always starts from `/spec/plan.md` and can consult companion spec files selectively.
