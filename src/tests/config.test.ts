@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import type { RuntimeConfig } from '../server/config.js';
-import { createGitHostProfile, loadRuntimeConfig } from '../server/config.js';
+import { createGitHostProfile, loadRuntimeConfig, resolveSourceRoot } from '../server/config.js';
 import { buildJobPaths } from '../server/paths.js';
 
 const homeDir = '/home/tester';
@@ -51,4 +51,17 @@ test('loadRuntimeConfig resolves the repository root for docker assets', async (
   const config = await loadRuntimeConfig();
 
   assert.match(config.sourceRoot, /\/agent-runner$/);
+});
+
+test('resolveSourceRoot returns the repository root for source modules', async () => {
+  const resolved = await resolveSourceRoot(new URL('../server/config.ts', import.meta.url).href);
+
+  assert.match(resolved, /\/agent-runner$/);
+});
+
+test('resolveSourceRoot returns the repository root for built modules under dist', async () => {
+  const simulatedBuiltModuleUrl = new URL('../../dist/server/server/config.js', import.meta.url).href;
+  const resolved = await resolveSourceRoot(simulatedBuiltModuleUrl);
+
+  assert.match(resolved, /\/agent-runner$/);
 });

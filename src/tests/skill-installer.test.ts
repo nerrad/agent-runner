@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import type { RuntimeConfig } from '../server/config.js';
+import { resolveSourceRoot } from '../server/config.js';
 import { installSkills } from '../server/skill-installer.js';
 
 function createConfig(root: string): RuntimeConfig {
@@ -51,4 +52,18 @@ test('installSkills refuses to overwrite an existing install without force', asy
     () => installSkills(config, (target) => path.join(root, target), { targets: [ 'claude' ] }),
     /--force/,
   );
+});
+
+test('installSkills succeeds when sourceRoot is resolved from a built module path', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-skills-dist-root-'));
+  const resolvedSourceRoot = await resolveSourceRoot(new URL('../../dist/server/server/config.js', import.meta.url).href);
+  const config = {
+    ...createConfig(root),
+    sourceRoot: resolvedSourceRoot,
+  };
+
+  const installed = await installSkills(config, (target) => path.join(root, target), { targets: [ 'claude' ] });
+
+  assert.equal(installed.length, 1);
+  assert.match(await readFile(path.join(root, 'claude', 'launch-agent-runner-spec', 'SKILL.md'), 'utf8'), /existing spec/);
 });

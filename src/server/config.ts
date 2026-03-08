@@ -1,5 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { GitHostProfile, GitHubHost } from '../shared/types.js';
 import { ensureDir, pathExists } from './fs-utils.js';
 
@@ -39,7 +40,7 @@ export async function resolveDockerSocketPath(): Promise<string> {
 
 export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
   const appDir = process.env.AGENT_RUNNER_HOME ?? path.join(os.homedir(), '.agent-runner');
-  const sourceRoot = path.resolve(new URL('../..', import.meta.url).pathname);
+  const sourceRoot = await resolveSourceRoot(import.meta.url);
 
   const config: RuntimeConfig = {
     appDir,
@@ -65,6 +66,24 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
   await ensureDir(config.artifactsDir);
 
   return config;
+}
+
+export async function resolveSourceRoot(moduleUrl: string): Promise<string> {
+  let currentDir = path.dirname(fileURLToPath(moduleUrl));
+
+  for (;;) {
+    if (await pathExists(path.join(currentDir, 'package.json'))) {
+      return currentDir;
+    }
+
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      break;
+    }
+    currentDir = parentDir;
+  }
+
+  return path.resolve(path.dirname(fileURLToPath(moduleUrl)), '../..');
 }
 
 export function createGitHostProfile(config: RuntimeConfig, host: GitHubHost): GitHostProfile {
