@@ -316,6 +316,20 @@ select {
   flex-wrap: wrap;
 }
 
+.artifact-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent-strong);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.artifact-link.active {
+  color: var(--text);
+  text-decoration-thickness: 2px;
+}
+
 .log-shell {
   min-width: 0;
   border: 1px solid rgba(36, 25, 15, 0.1);
@@ -374,6 +388,66 @@ select {
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.summary-view {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  min-height: 28rem;
+  max-height: 46rem;
+  overflow: auto;
+}
+
+.summary-topline {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  color: rgba(248, 241, 231, 0.7);
+  font-size: 0.82rem;
+}
+
+.summary-copy {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.summary-grid {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.summary-grid dt {
+  margin-bottom: 0.25rem;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(248, 241, 231, 0.7);
+}
+
+.summary-grid dd {
+  margin: 0;
+  font-family: "SFMono-Regular", "JetBrains Mono", Menlo, monospace;
+  font-size: 0.85rem;
+}
+
+.summary-section h3 {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(248, 241, 231, 0.7);
+}
+
+.summary-files {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.45rem;
+  font-family: "SFMono-Regular", "JetBrains Mono", Menlo, monospace;
+  font-size: 0.85rem;
 }
 
 @media (max-width: 1380px) {

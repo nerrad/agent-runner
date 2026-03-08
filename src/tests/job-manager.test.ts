@@ -298,6 +298,7 @@ test('job manager processes a claude job through completion with direct env auth
   const job = await createJob(manager, 'claude');
   const finished = await waitForJob(store, job.id, [ 'completed' ]);
   const log = await readFile(finished.artifacts.logPath, 'utf8');
+  const summary = JSON.parse(await readFile(finished.artifacts.summaryPath, 'utf8')) as { summary?: string };
 
   assert.equal(finished.status, 'completed');
   assert.equal(finished.containerId, 'container-123');
@@ -311,6 +312,7 @@ test('job manager processes a claude job through completion with direct env auth
   assert.match(log, /\[agent-runner\] building worker image and launching agent/);
   assert.match(log, /\[agent-runner\] container started: container-123/);
   assert.match(log, /\[agent-runner\] job completed/);
+  assert.equal(summary.summary, 'done');
 
   clearAuthEnv();
 });

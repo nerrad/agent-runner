@@ -1,7 +1,12 @@
 import express from 'express';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
-import { JobSpecSchema } from '../shared/types.js';
+import {
+  JobArtifactIdSchema,
+  JobSummaryArtifactSchema,
+  JobSpecSchema,
+} from '../shared/types.js';
+import type { JobArtifactId, JobRecord, JobSummaryArtifact } from '../shared/types.js';
 import type { RuntimeContext } from './runtime.js';
 
 export interface AppContext {
@@ -120,6 +125,47 @@ export function createApp(runtime: RuntimeContext): AppContext {
     }
   });
 
+  app.get('/api/jobs/:jobId/artifacts/:artifactId', async (request, response, next) => {
+    try {
+      const record = await runtime.manager.getJob(request.params.jobId);
+      if (!record) {
+        response.status(404).json({ error: 'Job not found' });
+        return;
+      }
+
+      const artifactId = JobArtifactIdSchema.parse(request.params.artifactId);
+      const descriptor = getArtifactDescriptor(record, artifactId);
+
+      let content = '';
+      let available = true;
+
+      try {
+        content = await readFile(descriptor.absolutePath, 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          available = false;
+        } else {
+          throw error;
+        }
+      }
+
+      let summary: JobSummaryArtifact | undefined;
+      if (artifactId === 'summary' && content) {
+        summary = JobSummaryArtifactSchema.parse(JSON.parse(content));
+      }
+
+      response.json({
+        artifactId,
+        label: descriptor.label,
+        available,
+        content,
+        summary,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.use('/artifacts', express.static(runtime.config.artifactsDir));
 
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
@@ -140,6 +186,20 @@ function windowedLogFollower(tick: () => Promise<boolean>): () => void {
   }, 500);
 
   return () => clearInterval(timer);
+}
+
+function getArtifactDescriptor(
+  record: JobRecord,
+  artifactId: JobArtifactId,
+): { absolutePath: string; label: string } {
+  switch (artifactId) {
+    case 'summary':
+      return { absolutePath: record.artifacts.summaryPath, label: 'summary' };
+    case 'gitDiff':
+      return { absolutePath: record.artifacts.gitDiffPath, label: 'git diff' };
+    case 'transcript':
+      return { absolutePath: record.artifacts.agentTranscriptPath, label: 'transcript' };
+  }
 }
 
 export async function serveClient(app: express.Express, clientRoot: string): Promise<void> {

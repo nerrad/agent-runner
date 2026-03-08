@@ -326,15 +326,16 @@ export class JobManager {
     }
 
     const changedFiles = await this.git.getChangedFiles(record.workspacePath);
+    let committed = false;
     if (changedFiles.length > 0 && record.spec.commitOnStop) {
-      await this.git.commitAll(record.workspacePath, `chore(agent-runner): snapshot ${record.id}`);
+      committed = await this.git.commitAll(record.workspacePath, `chore(agent-runner): snapshot ${record.id}`);
     }
 
     const headSha = await this.git.getHeadSha(record.workspacePath);
     record = await this.updateRecord(record, {
       headSha,
     });
-    await this.writeArtifacts(record, changedFiles, agentResult, stagedSpec.sourcePath);
+    await this.writeArtifacts(record, changedFiles, agentResult, stagedSpec.sourcePath, committed);
 
     if (dockerResult.exitCode !== 0 && !agentResult) {
       await this.updateRecord(record, {
@@ -357,10 +358,13 @@ export class JobManager {
     changedFiles: string[],
     agentResult: AgentResult | null,
     sourceSpecPath: string,
+    committed: boolean,
   ): Promise<void> {
     let diffContent = '';
     try {
-      diffContent = (await runCommand('git', [ '-C', record.workspacePath, 'diff', 'HEAD~1..HEAD' ])).stdout;
+      diffContent = committed
+        ? (await runCommand('git', [ '-C', record.workspacePath, 'diff', 'HEAD~1..HEAD' ])).stdout
+        : (await runCommand('git', [ '-C', record.workspacePath, 'diff' ])).stdout;
     } catch {
       diffContent = '';
     }
@@ -369,6 +373,7 @@ export class JobManager {
     await writeJsonAtomic(record.artifacts.summaryPath, {
       id: record.id,
       status: agentResult?.status ?? record.status,
+      summary: agentResult?.summary,
       blockerReason: agentResult?.blockerReason,
       branchName: record.branchName,
       changedFiles,

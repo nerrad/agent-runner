@@ -1,6 +1,12 @@
 import type { FormEvent, ReactElement } from 'react';
 import { startTransition, useEffect, useMemo, useRef, useState } from 'react';
-import type { JobRecord, JobSpec } from '../shared/types.js';
+import type {
+  JobArtifactId,
+  JobArtifactPayload,
+  JobSummaryArtifact,
+  JobRecord,
+  JobSpec,
+} from '../shared/types.js';
 
 const INITIAL_FORM: JobSpec = {
   repoUrl: '',
@@ -14,11 +20,34 @@ const INITIAL_FORM: JobSpec = {
   wpEnvEnabled: true,
 };
 
+const VIEWER_TABS = [
+  { id: 'run', label: 'run.log' },
+  { id: 'debug', label: 'debug.log' },
+  { id: 'summary', label: 'summary' },
+  { id: 'gitDiff', label: 'git diff' },
+  { id: 'transcript', label: 'transcript' },
+] as const;
+
+type ViewerTabId = typeof VIEWER_TABS[number]['id'];
+
+interface ArtifactState {
+  loading: boolean;
+  error: string | null;
+  payload: JobArtifactPayload | null;
+}
+
+const INITIAL_ARTIFACT_STATE: ArtifactState = {
+  loading: false,
+  error: null,
+  payload: null,
+};
+
 export function App(): ReactElement {
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
-  const [logKind, setLogKind] = useState<'run' | 'debug'>('run');
+  const [viewerTab, setViewerTab] = useState<ViewerTabId>('run');
   const [logContent, setLogContent] = useState('');
+  const [artifactState, setArtifactState] = useState<ArtifactState>(INITIAL_ARTIFACT_STATE);
   const [form, setForm] = useState(INITIAL_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,12 +68,13 @@ export function App(): ReactElement {
   }, []);
 
   useEffect(() => {
-    if (!selectedJob) {
+    if (!selectedJob || !isLiveLogTab(viewerTab)) {
       logContentRef.current = '';
       setLogContent('');
       return;
     }
 
+    const logKind = viewerTab === 'debug' ? 'debug' : 'run';
     let closed = false;
     logContentRef.current = '';
     setLogContent('');
@@ -113,7 +143,57 @@ export function App(): ReactElement {
       closed = true;
       source.close();
     };
-  }, [selectedJob?.id, logKind]);
+  }, [selectedJob?.id, viewerTab]);
+
+  useEffect(() => {
+    if (!selectedJob || isLiveLogTab(viewerTab)) {
+      setArtifactState(INITIAL_ARTIFACT_STATE);
+      return;
+    }
+
+    let canceled = false;
+    setArtifactState({
+      loading: true,
+      error: null,
+      payload: null,
+    });
+
+    void (async () => {
+      try {
+        const response = await fetch(`/api/jobs/${selectedJob.id}/artifacts/${viewerTab}`);
+        const payload = await response.json() as unknown;
+        if (!response.ok) {
+          const failure = payload as { error?: string };
+          throw new Error(failure.error ?? `Failed to load ${viewerTabLabel(viewerTab)}`);
+        }
+        if (canceled) {
+          return;
+        }
+        startTransition(() => {
+          setArtifactState({
+            loading: false,
+            error: null,
+            payload: payload as JobArtifactPayload,
+          });
+        });
+      } catch (artifactError) {
+        if (canceled) {
+          return;
+        }
+        startTransition(() => {
+          setArtifactState({
+            loading: false,
+            error: artifactError instanceof Error ? artifactError.message : `Failed to load ${viewerTabLabel(viewerTab)}`,
+            payload: null,
+          });
+        });
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
+  }, [selectedJob?.id, viewerTab]);
 
   async function refreshJobs(): Promise<void> {
     try {
@@ -168,6 +248,7 @@ export function App(): ReactElement {
       startTransition(() => {
         setForm(INITIAL_FORM);
         setSelectedJobId(created.id);
+        setViewerTab('run');
       });
       await refreshJobs();
     } catch (submitError) {
@@ -371,10 +452,11 @@ export function App(): ReactElement {
                     <div>
                       <dt>Artifacts</dt>
                       <dd className="artifact-links">
-                        {renderArtifactLink(selectedJob.id, selectedJob.artifacts.summaryPath, 'summary')}
-                        {renderArtifactLink(selectedJob.id, selectedJob.artifacts.gitDiffPath, 'git diff')}
-                        {renderArtifactLink(selectedJob.id, selectedJob.artifacts.debugLogPath, 'debug log')}
-                        {renderArtifactLink(selectedJob.id, selectedJob.artifacts.agentTranscriptPath, 'transcript')}
+                        {renderViewerLink('run log', 'run', viewerTab, setViewerTab)}
+                        {renderViewerLink('debug log', 'debug', viewerTab, setViewerTab)}
+                        {renderViewerLink('summary', 'summary', viewerTab, setViewerTab)}
+                        {renderViewerLink('git diff', 'gitDiff', viewerTab, setViewerTab)}
+                        {renderViewerLink('transcript', 'transcript', viewerTab, setViewerTab)}
                       </dd>
                     </div>
                     {selectedJob.blockerReason ? (
@@ -390,27 +472,23 @@ export function App(): ReactElement {
               <div className="log-shell">
                 <div className="log-header">
                   <div className="log-header-main">
-                    <span>{logKind === 'run' ? 'Run log' : 'Debug log'}</span>
-                    <div className="log-toggle" role="tablist" aria-label="Log type">
-                      <button
-                        type="button"
-                        className={logKind === 'run' ? 'active' : ''}
-                        onClick={() => setLogKind('run')}
-                      >
-                        Run
-                      </button>
-                      <button
-                        type="button"
-                        className={logKind === 'debug' ? 'active' : ''}
-                        onClick={() => setLogKind('debug')}
-                      >
-                        Debug
-                      </button>
+                    <span>{viewerTabLabel(viewerTab)}</span>
+                    <div className="log-toggle" role="tablist" aria-label="Viewer tab">
+                      {VIEWER_TABS.map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          className={viewerTab === tab.id ? 'active' : ''}
+                          onClick={() => setViewerTab(tab.id)}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
                     </div>
                   </div>
-                  <span>{selectedJob.id}</span>
+                  <span>{isLiveLogTab(viewerTab) ? 'live' : 'artifact'}</span>
                 </div>
-                <pre>{logContent || (logKind === 'debug' ? 'Waiting for debug output...' : 'Waiting for output...')}</pre>
+                {renderViewerBody(viewerTab, logContent, artifactState)}
               </div>
             </div>
           ) : (
@@ -422,19 +500,141 @@ export function App(): ReactElement {
   );
 }
 
-function artifactUrl(jobId: string, absolutePath?: string): string | null {
-  if (!absolutePath) {
-    return null;
-  }
-  const filename = absolutePath.split('/').pop();
-  return filename ? `/artifacts/${jobId}/${filename}` : null;
+function renderViewerLink(
+  label: string,
+  tab: ViewerTabId,
+  activeTab: ViewerTabId,
+  onSelect: (tab: ViewerTabId) => void,
+): ReactElement {
+  return (
+    <button
+      type="button"
+      className={`artifact-link ${activeTab === tab ? 'active' : ''}`}
+      onClick={() => onSelect(tab)}
+    >
+      {label}
+    </button>
+  );
 }
 
-function renderArtifactLink(jobId: string, absolutePath: string | undefined, label: string): ReactElement | null {
-  const href = artifactUrl(jobId, absolutePath);
-  if (!href) {
-    return null;
+function renderViewerBody(viewerTab: ViewerTabId, logContent: string, artifactState: ArtifactState): ReactElement {
+  if (isLiveLogTab(viewerTab)) {
+    return (
+      <pre>{logContent || (viewerTab === 'debug' ? 'Waiting for debug output...' : 'Waiting for output...')}</pre>
+    );
   }
 
-  return <a href={href} target="_blank" rel="noreferrer">{label}</a>;
+  if (artifactState.loading) {
+    return <pre>Loading {viewerTabLabel(viewerTab)}...</pre>;
+  }
+
+  if (artifactState.error) {
+    return <pre>{artifactState.error}</pre>;
+  }
+
+  if (!artifactState.payload) {
+    return <pre>Select an artifact to inspect it.</pre>;
+  }
+
+  if (viewerTab === 'summary' && artifactState.payload.summary) {
+    return renderSummaryArtifact(artifactState.payload.summary);
+  }
+
+  return (
+    <pre>{artifactText(viewerTab, artifactState.payload)}</pre>
+  );
+}
+
+function renderSummaryArtifact(summary: JobSummaryArtifact): ReactElement {
+  return (
+    <div className="summary-view">
+      <div className="summary-topline">
+        <span className={`status-pill status-${summary.status}`}>{summary.status}</span>
+        <span>{summary.finishedAt}</span>
+      </div>
+      <p className="summary-copy">{summary.summary ?? 'No agent summary captured.'}</p>
+      <dl className="summary-grid">
+        <div>
+          <dt>Branch</dt>
+          <dd>{summary.branchName}</dd>
+        </div>
+        <div>
+          <dt>HEAD</dt>
+          <dd>{summary.headSha ?? 'pending'}</dd>
+        </div>
+        <div>
+          <dt>Spec path</dt>
+          <dd>{summary.specPath}</dd>
+        </div>
+        <div>
+          <dt>Source spec</dt>
+          <dd>{summary.sourceSpecPath}</dd>
+        </div>
+        <div>
+          <dt>Workspace</dt>
+          <dd>{summary.workspacePath}</dd>
+        </div>
+        <div>
+          <dt>Debug attach</dt>
+          <dd>{summary.debugCommand ?? 'Not available'}</dd>
+        </div>
+        {summary.blockerReason ? (
+          <div>
+            <dt>Blocker</dt>
+            <dd>{summary.blockerReason}</dd>
+          </div>
+        ) : null}
+      </dl>
+      <div className="summary-section">
+        <h3>Changed files</h3>
+        {summary.changedFiles.length > 0 ? (
+          <ul className="summary-files">
+            {summary.changedFiles.map((file) => (
+              <li key={file}>{file}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="empty-state">No file changes captured.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function artifactText(viewerTab: JobArtifactId, payload: JobArtifactPayload): string {
+  if (!payload.available) {
+    return `${payload.label} is not available yet.`;
+  }
+
+  if (payload.content.trim().length > 0) {
+    return payload.content;
+  }
+
+  switch (viewerTab) {
+    case 'gitDiff':
+      return 'No git diff captured for this job.';
+    case 'summary':
+      return 'No summary captured for this job.';
+    case 'transcript':
+      return 'No transcript captured for this job.';
+  }
+}
+
+function isLiveLogTab(viewerTab: ViewerTabId): viewerTab is 'run' | 'debug' {
+  return viewerTab === 'run' || viewerTab === 'debug';
+}
+
+function viewerTabLabel(viewerTab: ViewerTabId): string {
+  switch (viewerTab) {
+    case 'run':
+      return 'Run log';
+    case 'debug':
+      return 'Debug log';
+    case 'summary':
+      return 'Summary';
+    case 'gitDiff':
+      return 'Git diff';
+    case 'transcript':
+      return 'Transcript';
+  }
 }

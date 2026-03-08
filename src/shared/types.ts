@@ -90,6 +90,35 @@ export const AgentResultSchema = z.object({
 });
 export type AgentResult = z.infer<typeof AgentResultSchema>;
 
+export const JobSummaryArtifactSchema = z.object({
+  id: z.string().min(1),
+  status: z.string().min(1),
+  summary: z.string().nullable().optional(),
+  blockerReason: z.string().nullable().optional(),
+  branchName: z.string().min(1),
+  changedFiles: z.array(z.string()),
+  headSha: z.string().optional(),
+  finishedAt: z.string().min(1),
+  debugCommand: z.string().optional(),
+  workspacePath: z.string().min(1),
+  specPath: z.string().min(1),
+  sourceSpecPath: z.string().min(1),
+  resolvedSpec: ResolvedSpecSchema.optional(),
+});
+export type JobSummaryArtifact = z.infer<typeof JobSummaryArtifactSchema>;
+
+export const JobArtifactIdSchema = z.enum([ 'summary', 'gitDiff', 'transcript' ]);
+export type JobArtifactId = z.infer<typeof JobArtifactIdSchema>;
+
+export const JobArtifactPayloadSchema = z.object({
+  artifactId: JobArtifactIdSchema,
+  label: z.string().min(1),
+  available: z.boolean(),
+  content: z.string(),
+  summary: JobSummaryArtifactSchema.optional(),
+});
+export type JobArtifactPayload = z.infer<typeof JobArtifactPayloadSchema>;
+
 export const JobLogEventSchema = z.object({
   jobId: z.string().min(1),
   chunk: z.string(),
