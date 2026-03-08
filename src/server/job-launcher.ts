@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { closeSync, mkdirSync, openSync } from 'node:fs';
 import path from 'node:path';
 import type { RuntimeConfig } from './config.js';
 import { pathExists } from './fs-utils.js';
@@ -10,7 +11,16 @@ export interface LaunchCommand {
 }
 
 export async function buildInternalRunnerLaunchCommand(config: RuntimeConfig, jobId: string): Promise<LaunchCommand> {
+  const sourceCliPath = path.join(config.sourceRoot, 'src', 'server', 'cli.ts');
   const builtCliPath = path.join(config.sourceRoot, 'dist', 'server', 'server', 'cli.js');
+
+  if (await pathExists(sourceCliPath)) {
+    return {
+      command: process.execPath,
+      args: [ '--import', 'tsx', sourceCliPath, 'internal-run', jobId ],
+      cwd: config.sourceRoot,
+    };
+  }
 
   if (await pathExists(builtCliPath)) {
     return {
@@ -21,20 +31,24 @@ export async function buildInternalRunnerLaunchCommand(config: RuntimeConfig, jo
   }
 
   return {
-    command: 'pnpm',
-    args: [ 'exec', 'tsx', 'src/server/cli.ts', 'internal-run', jobId ],
+    command: process.execPath,
+    args: [ '--import', 'tsx', sourceCliPath, 'internal-run', jobId ],
     cwd: config.sourceRoot,
   };
 }
 
 export async function launchDetachedJobRunner(config: RuntimeConfig, jobId: string): Promise<void> {
   const launch = await buildInternalRunnerLaunchCommand(config, jobId);
+  const launcherLogPath = path.join(config.artifactsDir, jobId, 'launcher.log');
+  mkdirSync(path.dirname(launcherLogPath), { recursive: true });
+  const launcherLogFd = openSync(launcherLogPath, 'a');
   const child = spawn(launch.command, launch.args, {
     cwd: launch.cwd,
     detached: true,
-    stdio: 'ignore',
+    stdio: [ 'ignore', launcherLogFd, launcherLogFd ],
     env: process.env,
   });
+  closeSync(launcherLogFd);
 
   child.unref();
 }
