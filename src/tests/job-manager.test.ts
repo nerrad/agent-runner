@@ -311,6 +311,28 @@ test('helper auth is used when direct claude env is absent and secrets are not l
   clearAuthEnv();
 });
 
+test('automatic claude helper from claude settings resolves a key when env auth is absent', async () => {
+  clearAuthEnv();
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-auto-claude-helper-'));
+  const config = createRuntimeConfig(root);
+  await mkdir(config.claudeDir, { recursive: true });
+  await writeFile(path.join(config.claudeDir, 'settings.json'), JSON.stringify({
+    apiKeyHelper: 'printf auto-claude-key',
+  }), 'utf8');
+
+  const docker = new MockDockerRunner();
+  const { manager, store } = createManager(config, docker);
+
+  const job = await createJob(manager, 'claude');
+  const finished = await waitForJob(store, job.id, [ 'completed' ]);
+  const log = await readFile(finished.artifacts.logPath, 'utf8');
+
+  assert.equal(finished.status, 'completed');
+  assert.equal(docker.lastEnv?.ANTHROPIC_API_KEY, 'auto-claude-key');
+  assert.doesNotMatch(log, /auto-claude-key/);
+});
+
 test('direct env auth takes precedence over a failing helper', async () => {
   clearAuthEnv();
   process.env.ANTHROPIC_API_KEY = 'preferred-anthropic-key';
@@ -346,29 +368,34 @@ test('claude jobs fail before docker launch when no auth is available', async ()
   assert.match(log, /ANTHROPIC_API_KEY/);
 });
 
-test('claude jobs fail before docker launch when helper returns no usable key', async () => {
+test('claude jobs fail before docker launch when automatic helper returns no usable key', async () => {
   clearAuthEnv();
-  process.env.AGENT_RUNNER_ANTHROPIC_KEY_HELPER = 'printf ""';
 
   const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-empty-helper-'));
+  const config = createRuntimeConfig(root);
+  await mkdir(config.claudeDir, { recursive: true });
+  await writeFile(path.join(config.claudeDir, 'settings.json'), JSON.stringify({
+    apiKeyHelper: 'printf ""',
+  }), 'utf8');
+
   const docker = new MockDockerRunner();
-  const { manager } = createManager(createRuntimeConfig(root), docker);
+  const { manager } = createManager(config, docker);
 
   const job = await createJob(manager, 'claude');
 
   assert.equal(job.status, 'failed');
   assert.equal(docker.runCount, 0);
-
-  clearAuthEnv();
 });
 
-test('codex jobs can use mounted local state when OPENAI_API_KEY is absent', async () => {
+test('codex jobs automatically resolve OPENAI_API_KEY from host auth state when env auth is absent', async () => {
   clearAuthEnv();
 
   const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-codex-fallback-'));
   const config = createRuntimeConfig(root);
   await mkdir(config.codexDir, { recursive: true });
-  await writeFile(path.join(config.codexDir, 'auth.json'), '{}', 'utf8');
+  await writeFile(path.join(config.codexDir, 'auth.json'), JSON.stringify({
+    OPENAI_API_KEY: 'codex-auth-file-key',
+  }), 'utf8');
 
   const docker = new MockDockerRunner();
   const { manager, store } = createManager(config, docker);
@@ -377,10 +404,10 @@ test('codex jobs can use mounted local state when OPENAI_API_KEY is absent', asy
   const finished = await waitForJob(store, job.id, [ 'completed' ]);
 
   assert.equal(finished.status, 'completed');
-  assert.equal(docker.lastEnv?.OPENAI_API_KEY, undefined);
+  assert.equal(docker.lastEnv?.OPENAI_API_KEY, 'codex-auth-file-key');
 });
 
-test('codex jobs fail before docker launch when key and fallback auth are both unavailable', async () => {
+test('codex jobs fail before docker launch when no key can be automatically resolved', async () => {
   clearAuthEnv();
 
   const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-no-codex-auth-'));

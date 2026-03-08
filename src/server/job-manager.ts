@@ -1,18 +1,19 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, open, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
+import { appendFile, open, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentResult, JobRecord, JobSpec, JobStatus } from '../shared/types.js';
 import { AgentResultSchema, JobSpecSchema } from '../shared/types.js';
 import type { RuntimeConfig } from './config.js';
 import { createGitHostProfile } from './config.js';
 import type { DockerRunner } from './docker-runner.js';
-import { ensureDir, pathExists, safeRemove, writeJsonAtomic } from './fs-utils.js';
+import { ensureDir, safeRemove, writeJsonAtomic } from './fs-utils.js';
 import type { GitManager } from './git-manager.js';
 import { JobEvents } from './job-events.js';
 import { launchDetachedJobRunner } from './job-launcher.js';
 import { buildJobPaths } from './paths.js';
 import { AgentAdapters } from './agent-adapters.js';
 import { runCommand } from './process-utils.js';
+import { resolveDefaultRuntimeApiKey } from './runtime-key-helper.js';
 import { stageSpecBundle } from './spec-resolver.js';
 import { JobStore } from './job-store.js';
 
@@ -33,7 +34,7 @@ interface JobLockPayload {
 
 interface ResolvedRuntimeAuth {
   env: Record<string, string>;
-  source: 'env' | 'helper' | 'local-state';
+  source: 'env' | 'helper' | 'auto-helper';
 }
 
 interface AuthLoopState {
@@ -391,11 +392,8 @@ export class JobManager {
 
     const helperCommand = process.env[policy.helperEnvVar]?.trim();
     if (helperCommand) {
-      const helperResult = await runCommand('/bin/sh', [ '-lc', helperCommand ], {
-        env: process.env,
-      });
-      const helperValue = helperResult.stdout.trim();
-      if (helperResult.exitCode === 0 && helperValue) {
+      const helperValue = await this.runHelperCommand(helperCommand);
+      if (helperValue) {
         return {
           ok: true,
           value: {
@@ -406,12 +404,13 @@ export class JobManager {
       }
     }
 
-    if (policy.allowLocalStateFallback && await this.hasCodexLocalState()) {
+    const automaticHelperValue = await resolveDefaultRuntimeApiKey(runtime, this.config);
+    if (automaticHelperValue) {
       return {
         ok: true,
         value: {
-          env: {},
-          source: 'local-state',
+          env: { [ policy.envKey ]: automaticHelperValue },
+          source: 'auto-helper',
         },
       };
     }
@@ -419,20 +418,16 @@ export class JobManager {
     return { ok: false, message: policy.missingAuthMessage };
   }
 
-  private async hasCodexLocalState(): Promise<boolean> {
-    if (!await pathExists(this.config.codexDir)) {
-      return false;
+  private async runHelperCommand(helperCommand: string): Promise<string | null> {
+    const helperResult = await runCommand('/bin/sh', [ '-lc', helperCommand ], {
+      env: process.env,
+    });
+    const helperValue = helperResult.stdout.trim();
+    if (helperResult.exitCode === 0 && helperValue) {
+      return helperValue;
     }
 
-    try {
-      const entries = await readdir(this.config.codexDir);
-      return entries.length > 0;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return false;
-      }
-      throw error;
-    }
+    return null;
   }
 
   private async observeRuntimeLog(record: JobRecord, chunk: string, state: AuthLoopState): Promise<void> {

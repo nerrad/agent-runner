@@ -87,9 +87,9 @@ test('runtime auth policies expose helper commands and auth-loop signatures', ()
   const codex = adapters.runtimeAuthPolicy('codex');
 
   assert.equal(claude.helperEnvVar, 'AGENT_RUNNER_ANTHROPIC_KEY_HELPER');
-  assert.equal(claude.allowLocalStateFallback, false);
   assert.equal(codex.helperEnvVar, 'AGENT_RUNNER_OPENAI_KEY_HELPER');
-  assert.equal(codex.allowLocalStateFallback, true);
+  assert.match(claude.missingAuthMessage, /automatically retrieved Anthropic API key/);
+  assert.match(codex.missingAuthMessage, /automatically retrieved OpenAI API key/);
   assert.ok(claude.authFailurePatterns.some((pattern) => pattern.test('Please run /login')));
   assert.ok(codex.authFailurePatterns.some((pattern) => pattern.test('Please run codex --login')));
   assert.ok(claude.noisePatterns.some((pattern) => pattern.test('Started container abc123')));

@@ -10,7 +10,6 @@ export interface PreparedAgentRun {
 export interface RuntimeAuthPolicy {
   envKey: 'ANTHROPIC_API_KEY' | 'OPENAI_API_KEY';
   helperEnvVar: 'AGENT_RUNNER_ANTHROPIC_KEY_HELPER' | 'AGENT_RUNNER_OPENAI_KEY_HELPER';
-  allowLocalStateFallback: boolean;
   missingAuthMessage: string;
   authLoopMessage: string;
   authFailurePatterns: RegExp[];
@@ -21,8 +20,7 @@ const RUNTIME_AUTH_POLICIES: Record<AgentRuntime, RuntimeAuthPolicy> = {
   claude: {
     envKey: 'ANTHROPIC_API_KEY',
     helperEnvVar: 'AGENT_RUNNER_ANTHROPIC_KEY_HELPER',
-    allowLocalStateFallback: false,
-    missingAuthMessage: 'Claude jobs require ANTHROPIC_API_KEY or AGENT_RUNNER_ANTHROPIC_KEY_HELPER for unattended Docker runs.',
+    missingAuthMessage: 'Claude jobs require ANTHROPIC_API_KEY or an automatically retrieved Anthropic API key for unattended Docker runs.',
     authLoopMessage: 'Claude authentication failed repeatedly before any meaningful output. Failing the job to avoid an infinite auth loop.',
     authFailurePatterns: [
       /authentication_failed/i,
@@ -38,8 +36,7 @@ const RUNTIME_AUTH_POLICIES: Record<AgentRuntime, RuntimeAuthPolicy> = {
   codex: {
     envKey: 'OPENAI_API_KEY',
     helperEnvVar: 'AGENT_RUNNER_OPENAI_KEY_HELPER',
-    allowLocalStateFallback: true,
-    missingAuthMessage: 'Codex jobs require OPENAI_API_KEY, AGENT_RUNNER_OPENAI_KEY_HELPER, or a non-empty mounted ~/.codex auth state.',
+    missingAuthMessage: 'Codex jobs require OPENAI_API_KEY or an automatically retrieved OpenAI API key for unattended Docker runs.',
     authLoopMessage: 'Codex authentication failed repeatedly before any meaningful output. Failing the job to avoid an infinite auth loop.',
     authFailurePatterns: [
       /incorrect api key provided/i,
