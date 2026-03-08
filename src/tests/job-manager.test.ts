@@ -18,6 +18,7 @@ const AUTH_ENV_KEYS = [
   'OPENAI_API_KEY',
   'AGENT_RUNNER_ANTHROPIC_KEY_HELPER',
   'AGENT_RUNNER_OPENAI_KEY_HELPER',
+  'AGENT_RUNNER_DISABLE_KEYCHAIN_LOOKUP',
 ] as const;
 
 class MockGitManager {
@@ -353,6 +354,7 @@ test('direct env auth takes precedence over a failing helper', async () => {
 
 test('claude jobs fail before docker launch when no auth is available', async () => {
   clearAuthEnv();
+  process.env.AGENT_RUNNER_DISABLE_KEYCHAIN_LOOKUP = '1';
 
   const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-no-claude-auth-'));
   const docker = new MockDockerRunner();
@@ -370,6 +372,7 @@ test('claude jobs fail before docker launch when no auth is available', async ()
 
 test('claude jobs fail before docker launch when automatic helper returns no usable key', async () => {
   clearAuthEnv();
+  process.env.AGENT_RUNNER_DISABLE_KEYCHAIN_LOOKUP = '1';
 
   const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-empty-helper-'));
   const config = createRuntimeConfig(root);
@@ -409,6 +412,7 @@ test('codex jobs automatically resolve OPENAI_API_KEY from host auth state when 
 
 test('codex jobs fail before docker launch when no key can be automatically resolved', async () => {
   clearAuthEnv();
+  process.env.AGENT_RUNNER_DISABLE_KEYCHAIN_LOOKUP = '1';
 
   const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-no-codex-auth-'));
   const docker = new MockDockerRunner();

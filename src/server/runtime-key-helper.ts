@@ -10,6 +10,7 @@ import { runCommand } from './process-utils.js';
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 const CLAUDE_KEYCHAIN_SERVICES = [
+  'Claude Code-credentials',
   'anthropic-api-key',
   'Anthropic API Key',
   'claude-code-api-key',
@@ -26,6 +27,8 @@ const OPENAI_KEYCHAIN_SERVICES = [
   'codex',
   'Codex',
 ] as const;
+
+const DISABLE_KEYCHAIN_LOOKUP_ENV = 'AGENT_RUNNER_DISABLE_KEYCHAIN_LOOKUP';
 
 export async function resolveDefaultRuntimeApiKey(
   runtime: AgentRuntime,
@@ -146,6 +149,10 @@ async function runHelperCommand(helperCommand: string): Promise<string | null> {
 }
 
 async function resolveMacOsKeychainSecret(serviceCandidates: readonly string[]): Promise<string | null> {
+  if (process.env[DISABLE_KEYCHAIN_LOOKUP_ENV] === '1') {
+    return null;
+  }
+
   if (process.platform !== 'darwin') {
     return null;
   }
