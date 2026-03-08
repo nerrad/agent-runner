@@ -17,6 +17,8 @@ const runtimeConfig: RuntimeConfig = {
   claudeSettingsPath: path.join(homeDir, '.claude.json'),
   codexDir: path.join(homeDir, '.codex'),
   dockerSocketPath: path.join(homeDir, '.orbstack', 'run', 'docker.sock'),
+  hostUid: 501,
+  hostGid: 20,
   sshAuthSock: '/tmp/ssh.sock',
   githubProxyUrl: 'socks5://host.docker.internal:8080',
   workerImageTag: 'agent-runner-worker:latest',

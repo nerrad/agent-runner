@@ -17,6 +17,8 @@ function createConfig(root: string): RuntimeConfig {
     claudeSettingsPath: path.join(root, '.claude.json'),
     codexDir: path.join(root, 'codex'),
     dockerSocketPath: '/tmp/docker.sock',
+    hostUid: 501,
+    hostGid: 20,
     sshAuthSock: '/tmp/ssh.sock',
     githubProxyUrl: 'socks5://host.docker.internal:8080',
     workerImageTag: 'agent-runner-worker:latest',

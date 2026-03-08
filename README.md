@@ -73,6 +73,7 @@ Each job stages runtime artifacts under `/artifacts` and starts the selected age
 
 Shared container setup:
 
+- worker runs as a non-root user context using the host UID/GID when available
 - repo checkout mounted at `/workspace`
 - staged spec bundle mounted read-only at `/spec`
 - prompt written to `/artifacts/prompt.txt`

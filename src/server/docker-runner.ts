@@ -61,7 +61,7 @@ export class DockerRunner {
     const containerName = `agent-runner-${request.job.id}`;
     const sshMountTarget = '/tmp/agent-runner-ssh.sock';
     const ghMountTarget = '/gh-config';
-    const containerHome = '/root';
+    const containerHome = '/home/agent-runner';
 
     const dockerArgs = [
       'run',
@@ -71,6 +71,8 @@ export class DockerRunner {
       containerName,
       '--workdir',
       '/workspace',
+      '--user',
+      `${this.config.hostUid ?? 1000}:${this.config.hostGid ?? 1000}`,
       '--mount',
       `type=bind,src=${request.job.workspacePath},dst=/workspace`,
       '--mount',
@@ -93,6 +95,10 @@ export class DockerRunner {
       `GH_CONFIG_DIR=${ghMountTarget}`,
       '--env',
       `HOME=${containerHome}`,
+      '--env',
+      'USER=agent-runner',
+      '--env',
+      'LOGNAME=agent-runner',
     ];
 
     if (this.config.sshAuthSock) {

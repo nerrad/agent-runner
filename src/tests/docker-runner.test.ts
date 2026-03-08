@@ -17,6 +17,8 @@ const runtimeConfig: RuntimeConfig = {
   claudeSettingsPath: path.join(homeDir, '.claude.json'),
   codexDir: path.join(homeDir, '.codex'),
   dockerSocketPath: path.join(homeDir, '.orbstack', 'run', 'docker.sock'),
+  hostUid: 501,
+  hostGid: 20,
   sshAuthSock: '/private/tmp/agent.sock',
   githubProxyUrl: 'socks5://host.docker.internal:8080',
   workerImageTag: 'agent-runner-worker:latest',
@@ -66,11 +68,13 @@ test('docker runner mounts local claude/codex state into the worker home', () =>
   });
 
   const commandString = args.join(' ');
-  assert.match(commandString, /src=\/home\/tester\/\.claude,dst=\/root\/\.claude/);
-  assert.match(commandString, /src=\/home\/tester\/\.claude\.json,dst=\/root\/\.claude\.json/);
-  assert.match(commandString, /src=\/home\/tester\/\.codex,dst=\/root\/\.codex/);
+  assert.match(commandString, /--user 501:20/);
+  assert.match(commandString, /src=\/home\/tester\/\.claude,dst=\/home\/agent-runner\/\.claude/);
+  assert.match(commandString, /src=\/home\/tester\/\.claude\.json,dst=\/home\/agent-runner\/\.claude\.json/);
+  assert.match(commandString, /src=\/home\/tester\/\.codex,dst=\/home\/agent-runner\/\.codex/);
   assert.match(commandString, /src=\/tmp\/agent-runner\/artifacts\/job-123\/spec,dst=\/spec,readonly/);
-  assert.match(commandString, /HOME=\/root/);
+  assert.match(commandString, /HOME=\/home\/agent-runner/);
+  assert.match(commandString, /USER=agent-runner/);
   assert.match(commandString, /GH_CONFIG_DIR=\/gh-config/);
   assert.match(commandString, /SSH_AUTH_SOCK=\/tmp\/agent-runner-ssh\.sock/);
 });

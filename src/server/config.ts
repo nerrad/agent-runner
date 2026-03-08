@@ -13,6 +13,8 @@ export interface RuntimeConfig {
   claudeSettingsPath: string;
   codexDir: string;
   dockerSocketPath: string;
+  hostUid?: number;
+  hostGid?: number;
   sshAuthSock?: string;
   githubProxyUrl?: string;
   workerImageTag: string;
@@ -49,6 +51,8 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
     claudeSettingsPath: process.env.AGENT_RUNNER_CLAUDE_SETTINGS ?? path.join(os.homedir(), '.claude.json'),
     codexDir: process.env.AGENT_RUNNER_CODEX_DIR ?? path.join(os.homedir(), '.codex'),
     dockerSocketPath: await resolveDockerSocketPath(),
+    hostUid: typeof process.getuid === 'function' ? process.getuid() : undefined,
+    hostGid: typeof process.getgid === 'function' ? process.getgid() : undefined,
     sshAuthSock: process.env.SSH_AUTH_SOCK,
     githubProxyUrl: process.env.AGENT_RUNNER_GITHUB_PROXY_URL,
     workerImageTag: process.env.AGENT_RUNNER_IMAGE ?? 'agent-runner-worker:latest',

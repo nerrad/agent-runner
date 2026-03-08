@@ -92,6 +92,8 @@ function createRuntimeConfig(root: string): RuntimeConfig {
     claudeSettingsPath: path.join(root, '.claude.json'),
     codexDir: path.join(root, 'codex'),
     dockerSocketPath: '/tmp/docker.sock',
+    hostUid: 501,
+    hostGid: 20,
     sshAuthSock: '/tmp/ssh.sock',
     githubProxyUrl: 'socks5://host.docker.internal:8080',
     workerImageTag: 'agent-runner-worker:latest',
@@ -183,9 +185,8 @@ test('cancelJob stops the active container and keeps canceled state', async () =
   const running = await waitForJobWithContainer(store, job.id);
   assert.equal(running.containerId, 'container-blocking');
 
-  await manager.cancelJob(job.id);
-
-  const canceled = await waitForJob(store, job.id, [ 'canceled' ]);
+  const canceled = await manager.cancelJob(job.id);
+  assert.ok(canceled);
   assert.equal(canceled.status, 'canceled');
   assert.equal(docker.stoppedContainerId, 'container-blocking');
 });
