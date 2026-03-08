@@ -84,7 +84,7 @@ export function createApp(runtime: RuntimeContext): AppContext {
       const bootstrap = await runtime.manager.readLog(request.params.jobId);
       if (bootstrap) {
         sentLength = bootstrap.length;
-        response.write(`data: ${JSON.stringify({ type: 'bootstrap', chunk: bootstrap })}\n\n`);
+        response.write(`data: ${JSON.stringify({ type: 'bootstrap', chunk: bootstrap, start: 0, end: sentLength })}\n\n`);
       }
 
       const interval = windowedLogFollower(async () => {
@@ -96,9 +96,10 @@ export function createApp(runtime: RuntimeContext): AppContext {
 
         const content = await runtime.manager.readLog(request.params.jobId);
         if (content.length > sentLength) {
+          const start = sentLength;
           const chunk = content.slice(sentLength);
           sentLength = content.length;
-          response.write(`data: ${JSON.stringify({ type: 'log', log: { chunk } })}\n\n`);
+          response.write(`data: ${JSON.stringify({ type: 'log', log: { chunk, start, end: sentLength } })}\n\n`);
         }
 
         if ([ 'blocked', 'completed', 'failed', 'canceled' ].includes(nextRecord.status) && content.length === sentLength) {

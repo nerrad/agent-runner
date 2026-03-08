@@ -125,6 +125,12 @@ select {
   box-shadow: var(--shadow);
 }
 
+.jobs-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: min(70vh, 48rem);
+}
+
 .panel-header h2 {
   margin: 0 0 0.3rem;
 }
@@ -177,9 +183,32 @@ select {
   color: var(--text);
 }
 
+.jobs-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.jobs-scroll::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3.5rem;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(252, 250, 245, 0), rgba(252, 250, 245, 0.9) 70%, rgba(252, 250, 245, 1));
+}
+
 .jobs-list {
   display: grid;
   gap: 0.8rem;
+  max-height: 100%;
+  overflow-y: auto;
+  padding-right: 0.35rem;
+  padding-bottom: 2rem;
+  scrollbar-gutter: stable;
 }
 
 .job-card {
@@ -332,6 +361,10 @@ select {
 @media (max-width: 1100px) {
   .layout {
     grid-template-columns: 1fr;
+  }
+
+  .jobs-panel {
+    max-height: min(28rem, 60vh);
   }
 
   .detail-grid {

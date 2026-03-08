@@ -1,5 +1,5 @@
 import type { FormEvent, ReactElement } from 'react';
-import { startTransition, useEffect, useMemo, useState } from 'react';
+import { startTransition, useEffect, useMemo, useRef, useState } from 'react';
 import type { JobRecord, JobSpec } from '../shared/types.js';
 
 const INITIAL_FORM: JobSpec = {
@@ -21,6 +21,7 @@ export function App(): ReactElement {
   const [form, setForm] = useState(INITIAL_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const logContentRef = useRef('');
 
   const selectedJob = useMemo(
     () => jobs.find((job) => job.id === selectedJobId) ?? jobs[0] ?? null,
@@ -38,40 +39,73 @@ export function App(): ReactElement {
 
   useEffect(() => {
     if (!selectedJob) {
+      logContentRef.current = '';
       setLogContent('');
       return;
     }
 
     let closed = false;
+    logContentRef.current = '';
     setLogContent('');
 
-    void fetch(`/api/jobs/${selectedJob.id}/logs`)
-      .then((response) => response.text())
-      .then((text) => {
-        if (!closed) {
-          startTransition(() => setLogContent(text));
-        }
-      });
+    const replaceLog = (nextContent: string): void => {
+      if (closed || nextContent === logContentRef.current) {
+        return;
+      }
+      logContentRef.current = nextContent;
+      startTransition(() => setLogContent(nextContent));
+    };
+
+    const refreshLog = async (): Promise<void> => {
+      const response = await fetch(`/api/jobs/${selectedJob.id}/logs`);
+      if (!response.ok || closed) {
+        return;
+      }
+
+      replaceLog(await response.text());
+    };
+
+    void refreshLog();
 
     const source = new EventSource(`/api/jobs/${selectedJob.id}/logs?follow=1`);
     source.onmessage = (event) => {
       const payload = JSON.parse(event.data) as {
         type?: string;
         chunk?: string;
-        log?: { chunk: string };
+        start?: number;
+        end?: number;
+        log?: {
+          chunk?: string;
+          start?: number;
+          end?: number;
+        };
       };
 
-      const chunk = payload.type === 'bootstrap'
-        ? payload.chunk ?? ''
-        : payload.log?.chunk ?? '';
+      if (payload.type === 'bootstrap') {
+        replaceLog(payload.chunk ?? '');
+        return;
+      }
 
+      const chunk = payload.log?.chunk ?? '';
       if (!chunk) {
         return;
       }
 
-      startTransition(() => {
-        setLogContent((current) => current + chunk);
-      });
+      const expectedStart = payload.log?.start ?? payload.start;
+      if (typeof expectedStart === 'number' && expectedStart !== logContentRef.current.length) {
+        void refreshLog();
+        return;
+      }
+
+      const nextContent = logContentRef.current + chunk;
+      const expectedEnd = payload.log?.end ?? payload.end;
+      if (typeof expectedEnd === 'number' && expectedEnd !== nextContent.length) {
+        void refreshLog();
+        return;
+      }
+
+      logContentRef.current = nextContent;
+      startTransition(() => setLogContent(nextContent));
     };
 
     return () => {
@@ -243,25 +277,27 @@ export function App(): ReactElement {
             <h2>Jobs</h2>
             <p>One active job at a time. New jobs queue automatically.</p>
           </div>
-          <div className="jobs-list">
-            {jobs.map((job) => (
-              <button
-                key={job.id}
-                type="button"
-                className={`job-card ${selectedJob?.id === job.id ? 'selected' : ''}`}
-                onClick={() => setSelectedJobId(job.id)}
-              >
-                <div className="job-card-head">
-                  <span className={`status-pill status-${job.status}`}>{job.status}</span>
-                  <span className="runtime-pill">{job.spec.agentRuntime}</span>
-                </div>
-                <strong>{job.spec.repoUrl}</strong>
-                <span>{job.spec.specPath}</span>
-                <span>{job.spec.model ?? 'runtime default'} / {job.spec.effort}</span>
-                <span className="job-meta">{job.branchName}</span>
-              </button>
-            ))}
-            {jobs.length === 0 ? <p className="empty-state">No jobs yet.</p> : null}
+          <div className="jobs-scroll">
+            <div className="jobs-list">
+              {jobs.map((job) => (
+                <button
+                  key={job.id}
+                  type="button"
+                  className={`job-card ${selectedJob?.id === job.id ? 'selected' : ''}`}
+                  onClick={() => setSelectedJobId(job.id)}
+                >
+                  <div className="job-card-head">
+                    <span className={`status-pill status-${job.status}`}>{job.status}</span>
+                    <span className="runtime-pill">{job.spec.agentRuntime}</span>
+                  </div>
+                  <strong>{job.spec.repoUrl}</strong>
+                  <span>{job.spec.specPath}</span>
+                  <span>{job.spec.model ?? 'runtime default'} / {job.spec.effort}</span>
+                  <span className="job-meta">{job.branchName}</span>
+                </button>
+              ))}
+              {jobs.length === 0 ? <p className="empty-state">No jobs yet.</p> : null}
+            </div>
           </div>
         </section>
 
