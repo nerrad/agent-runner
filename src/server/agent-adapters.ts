@@ -1,6 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { AgentResult, AgentRuntime, JobRecord, JobSpec } from '../shared/types.js';
+import type { AgentEffort, AgentResult, AgentRuntime, JobRecord, JobSpec } from '../shared/types.js';
 
 export interface PreparedAgentRun {
   command: string[];
@@ -27,13 +27,13 @@ export class AgentAdapters {
     if (job.spec.agentRuntime === 'codex') {
       return {
         prompt,
-        command: buildCodexCommand(job.artifacts.schemaPath, job.artifacts.finalResponsePath),
+        command: buildCodexCommand(job.spec, job.artifacts.schemaPath, job.artifacts.finalResponsePath),
       };
     }
 
     return {
       prompt,
-      command: buildClaudeCommand(job.artifacts.finalResponsePath),
+      command: buildClaudeCommand(job.spec, job.artifacts.finalResponsePath),
     };
   }
 
@@ -57,6 +57,9 @@ function buildAgentPrompt(spec: JobSpec, branchName: string): string {
     `Repository root: /workspace`,
     'Spec entrypoint: /spec/plan.md',
     `Working branch: ${branchName}`,
+    `Runtime: ${spec.agentRuntime}`,
+    `Model preference: ${spec.model ?? 'runtime default'}`,
+    `Effort preference: ${spec.effort}`,
     '',
     'Requirements:',
     '- Start with /spec/plan.md and work until the plan is complete or a hard blocker prevents progress.',
@@ -72,19 +75,48 @@ function buildAgentPrompt(spec: JobSpec, branchName: string): string {
   ].join('\n');
 }
 
-function buildCodexCommand(schemaPath: string, outputPath: string): string[] {
+function buildCodexCommand(spec: JobSpec, schemaPath: string, outputPath: string): string[] {
+  const optionParts = [
+    'codex exec',
+    '--dangerously-bypass-approvals-and-sandbox',
+    '--skip-git-repo-check',
+    '-C /workspace',
+  ];
+
+  if (spec.model) {
+    optionParts.push(`-m ${shellQuote(spec.model)}`);
+  }
+
+  if (spec.effort !== 'auto') {
+    optionParts.push(`-c ${shellQuote(`model_reasoning_effort="${spec.effort}"`)}`);
+  }
+
   return [
     'bash',
     '-lc',
     [
       'set -euo pipefail',
       'PROMPT="$(cat /artifacts/prompt.txt)"',
-      `codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -C /workspace --output-schema /artifacts/${path.basename(schemaPath)} -o /artifacts/${path.basename(outputPath)} "$PROMPT"`,
+      `${optionParts.join(' ')} --output-schema /artifacts/${path.basename(schemaPath)} -o /artifacts/${path.basename(outputPath)} "$PROMPT"`,
     ].join('\n'),
   ];
 }
 
-function buildClaudeCommand(outputPath: string): string[] {
+function buildClaudeCommand(spec: JobSpec, outputPath: string): string[] {
+  const optionParts = [
+    'claude -p',
+    '--dangerously-skip-permissions',
+    '--output-format json',
+  ];
+
+  if (spec.model) {
+    optionParts.push(`--model ${shellQuote(spec.model)}`);
+  }
+
+  if (spec.effort !== 'auto') {
+    optionParts.push(`--effort ${shellQuote(spec.effort)}`);
+  }
+
   return [
     'bash',
     '-lc',
@@ -92,7 +124,11 @@ function buildClaudeCommand(outputPath: string): string[] {
       'set -euo pipefail',
       'PROMPT="$(cat /artifacts/prompt.txt)"',
       'SCHEMA="$(cat /artifacts/result-schema.json)"',
-      `claude -p --dangerously-skip-permissions --output-format json --json-schema "$SCHEMA" "$PROMPT" > /artifacts/${path.basename(outputPath)}`,
+      `${optionParts.join(' ')} --json-schema "$SCHEMA" "$PROMPT" > /artifacts/${path.basename(outputPath)}`,
     ].join('\n'),
   ];
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll('\'', `'\"'\"'`)}'`;
 }

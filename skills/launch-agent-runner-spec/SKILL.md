@@ -12,6 +12,10 @@ Required inputs:
 - spec
 - runtime
 
+Optional inputs:
+- model
+- effort
+
 Rules:
 - Prefer an Agent OS spec directory such as `agent-os/specs/<slug>/`.
 - A spec directory must include `plan.md`. `shape.md`, `standards.md`, `references.md`, and `visuals/` are optional.
@@ -23,7 +27,7 @@ Rules:
 Command pattern:
 
 ```bash
-agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--host <github-host>] [--ref <ref>] [--detach]
+agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--host <github-host>] [--ref <ref>] [--detach]
 ```
 
 Behavior notes:

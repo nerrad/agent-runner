@@ -34,6 +34,7 @@ const jobRecord: JobRecord = {
     repoUrl: 'git@github.com:owner/repo.git',
     specPath: 'agent-os/specs/example',
     agentRuntime: 'claude',
+    effort: 'auto',
     githubHost: 'github.com',
     commitOnStop: true,
     wpEnvEnabled: true,

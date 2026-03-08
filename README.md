@@ -154,19 +154,19 @@ The global command still runs this repo's built CLI entrypoint at `dist/server/s
 Run from a local repo checkout:
 
 ```bash
-agent-runner run --repo /path/to/repo --spec agent-os/specs/feature-x --runtime claude
+agent-runner run --repo /path/to/repo --spec agent-os/specs/feature-x --runtime claude --model sonnet --effort high
 ```
 
 Run from a git URL:
 
 ```bash
-agent-runner run --repo git@github.com:owner/repo.git --spec agent-os/specs/feature-x --runtime codex
+agent-runner run --repo git@github.com:owner/repo.git --spec agent-os/specs/feature-x --runtime codex --model o3 --effort medium
 ```
 
 Available commands:
 
 ```bash
-agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--host <github-host>] [--ref <ref>] [--detach]
+agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--host <github-host>] [--ref <ref>] [--detach]
 agent-runner list
 agent-runner show <job-id>
 agent-runner logs <job-id> [--follow]
@@ -179,6 +179,8 @@ Normalization rules:
 - If `--repo` is a local path, agent-runner resolves `remote.origin.url`, defaults `--ref` to the current branch, and converts in-repo spec paths to repo-relative form
 - If `--repo` is a git URL, `--spec` must be repo-relative
 - Local repo path support is only for launch convenience; execution still happens from a fresh clone
+- `--model` is optional and passed through to the selected runtime
+- `--effort` defaults to `auto`; Claude uses its native `--effort` flag and Codex uses a config override in `exec` mode
 
 ## Web UI
 
@@ -188,11 +190,14 @@ The web form accepts the same job inputs:
 - ref
 - spec path
 - runtime
+- optional model
+- effort / thinking level
 - GitHub host or GitHub Enterprise hostname
 
 Job detail shows:
 
 - original spec path
+- requested model and effort
 - resolved spec mode (`bundle` or `file`)
 - detected staged spec files
 - branch, SHA, workspace, debug attach command, and live logs

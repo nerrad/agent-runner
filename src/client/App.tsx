@@ -7,6 +7,8 @@ const INITIAL_FORM: JobSpec = {
   ref: '',
   specPath: '',
   agentRuntime: 'claude',
+  model: '',
+  effort: 'auto',
   githubHost: 'github.com',
   commitOnStop: true,
   wpEnvEnabled: true,
@@ -97,6 +99,7 @@ export function App(): ReactElement {
     try {
       const payload = {
         ...form,
+        model: form.model || undefined,
         ref: form.ref || undefined,
       };
 
@@ -198,6 +201,28 @@ export function App(): ReactElement {
                 </select>
               </label>
               <label>
+                Model
+                <input
+                  value={form.model ?? ''}
+                  onChange={(event) => setForm((current) => ({ ...current, model: event.target.value }))}
+                  placeholder="runtime default"
+                />
+              </label>
+            </div>
+            <div className="inline-fields">
+              <label>
+                Effort
+                <select
+                  value={form.effort}
+                  onChange={(event) => setForm((current) => ({ ...current, effort: event.target.value as JobSpec['effort'] }))}
+                >
+                  <option value="auto">Auto</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </label>
+              <label>
                 GitHub host
                 <input
                   value={form.githubHost}
@@ -232,6 +257,7 @@ export function App(): ReactElement {
                 </div>
                 <strong>{job.spec.repoUrl}</strong>
                 <span>{job.spec.specPath}</span>
+                <span>{job.spec.model ?? 'runtime default'} / {job.spec.effort}</span>
                 <span className="job-meta">{job.branchName}</span>
               </button>
             ))}
@@ -267,6 +293,14 @@ export function App(): ReactElement {
                     <div>
                       <dt>HEAD</dt>
                       <dd>{selectedJob.headSha ?? 'pending'}</dd>
+                    </div>
+                    <div>
+                      <dt>Model</dt>
+                      <dd>{selectedJob.spec.model ?? 'runtime default'}</dd>
+                    </div>
+                    <div>
+                      <dt>Effort</dt>
+                      <dd>{selectedJob.spec.effort}</dd>
                     </div>
                     <div>
                       <dt>Spec path</dt>

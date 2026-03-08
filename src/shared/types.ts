@@ -3,6 +3,9 @@ import { z } from 'zod';
 export const AgentRuntimeSchema = z.enum([ 'claude', 'codex' ]);
 export type AgentRuntime = z.infer<typeof AgentRuntimeSchema>;
 
+export const AgentEffortSchema = z.enum([ 'auto', 'low', 'medium', 'high' ]);
+export type AgentEffort = z.infer<typeof AgentEffortSchema>;
+
 export const GitHubHostSchema = z.string().min(1);
 export type GitHubHost = z.infer<typeof GitHubHostSchema>;
 
@@ -23,6 +26,8 @@ export const JobSpecSchema = z.object({
   ref: z.string().min(1).optional(),
   specPath: z.string().min(1),
   agentRuntime: AgentRuntimeSchema,
+  model: z.string().min(1).optional(),
+  effort: AgentEffortSchema.default('auto'),
   githubHost: GitHubHostSchema,
   commitOnStop: z.literal(true).default(true),
   wpEnvEnabled: z.literal(true).default(true),

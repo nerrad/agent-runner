@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { stat } from 'node:fs/promises';
-import type { AgentRuntime, GitHubHost, JobRecord, JobSpec } from '../shared/types.js';
+import type { AgentEffort, AgentRuntime, GitHubHost, JobRecord, JobSpec } from '../shared/types.js';
 import { GitManager } from './git-manager.js';
 
 export type CliCommand =
@@ -10,6 +10,8 @@ export type CliCommand =
     repo: string;
     spec: string;
     runtime: AgentRuntime;
+    model?: string;
+    effort: AgentEffort;
     host: GitHubHost;
     ref?: string;
     detach: boolean;
@@ -78,6 +80,8 @@ function parseRunArgs(args: string[]): CliCommand {
   let repo = '';
   let spec = '';
   let runtime: AgentRuntime = 'claude';
+  let model: string | undefined;
+  let effort: AgentEffort = 'auto';
   let host: GitHubHost = 'github.com';
   let ref: string | undefined;
   let detach = false;
@@ -94,6 +98,12 @@ function parseRunArgs(args: string[]): CliCommand {
       case '--runtime':
         runtime = requireRuntime(requireOptionValue(args, ++index, '--runtime'));
         break;
+      case '--model':
+        model = requireOptionValue(args, ++index, '--model');
+        break;
+      case '--effort':
+        effort = requireEffort(requireOptionValue(args, ++index, '--effort'));
+        break;
       case '--host':
         host = requireHost(requireOptionValue(args, ++index, '--host'));
         break;
@@ -109,7 +119,7 @@ function parseRunArgs(args: string[]): CliCommand {
   }
 
   if (!repo || !spec) {
-    throw new Error('Usage: agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--host <host>] [--ref <ref>] [--detach]');
+    throw new Error('Usage: agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--host <host>] [--ref <ref>] [--detach]');
   }
 
   return {
@@ -117,6 +127,8 @@ function parseRunArgs(args: string[]): CliCommand {
     repo,
     spec,
     runtime,
+    model,
+    effort,
     host,
     ref,
     detach,
@@ -136,6 +148,13 @@ function requireRuntime(value: string): AgentRuntime {
     return value;
   }
   throw new Error(`Unsupported runtime: ${value}`);
+}
+
+function requireEffort(value: string): AgentEffort {
+  if (value === 'auto' || value === 'low' || value === 'medium' || value === 'high') {
+    return value;
+  }
+  throw new Error(`Unsupported effort: ${value}`);
 }
 
 function requireHost(value: string): GitHubHost {
@@ -158,6 +177,8 @@ export async function normalizeRunSpec(command: Extract<CliCommand, { command: '
         ref: command.ref,
         specPath: normalizeRelativePath(command.spec),
         agentRuntime: command.runtime,
+        model: command.model,
+        effort: command.effort,
         githubHost: command.host,
         commitOnStop: true,
         wpEnvEnabled: true,
@@ -178,6 +199,8 @@ export async function normalizeRunSpec(command: Extract<CliCommand, { command: '
       ref,
       specPath: toStoredSpecPath(requestedSpec, repoRoot),
       agentRuntime: command.runtime,
+      model: command.model,
+      effort: command.effort,
       githubHost: command.host,
       commitOnStop: true,
       wpEnvEnabled: true,
@@ -237,6 +260,8 @@ export function formatJobSummary(record: JobRecord): string {
     `${record.id}  ${record.status}  ${record.spec.agentRuntime}  ${record.branchName}`,
     `repo=${record.spec.repoUrl}`,
     `spec=${record.spec.specPath}`,
+    `model=${record.spec.model ?? 'default'}`,
+    `effort=${record.spec.effort}`,
   ];
 
   if (record.resolvedSpec) {
@@ -272,7 +297,7 @@ export function resolveSkillTargetRoot(target: 'claude' | 'codex'): string {
 export function helpText(): string {
   return [
     'agent-runner commands:',
-    '  agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--host <github-host>] [--ref <ref>] [--detach]',
+    '  agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--host <github-host>] [--ref <ref>] [--detach]',
     '  agent-runner list',
     '  agent-runner show <job-id>',
     '  agent-runner logs <job-id> [--follow]',

@@ -12,6 +12,8 @@ test('parseCliArgs handles run and installer commands', () => {
     '--repo', '/tmp/repo',
     '--spec', 'agent-os/specs/example',
     '--runtime', 'claude',
+    '--model', 'sonnet',
+    '--effort', 'high',
     '--host', 'github.example.com',
     '--detach',
   ]);
@@ -21,6 +23,8 @@ test('parseCliArgs handles run and installer commands', () => {
     repo: '/tmp/repo',
     spec: 'agent-os/specs/example',
     runtime: 'claude',
+    model: 'sonnet',
+    effort: 'high',
     host: 'github.example.com',
     ref: undefined,
     detach: true,
@@ -54,6 +58,8 @@ test('normalizeRunSpec converts a local repo path into a remote url and repo-rel
     repo: root,
     spec: 'agent-os/specs/example',
     runtime: 'codex',
+    model: 'o3',
+    effort: 'medium',
     host: 'github.com',
     detach: false,
   });
@@ -61,6 +67,8 @@ test('normalizeRunSpec converts a local repo path into a remote url and repo-rel
   assert.equal(normalized.jobSpec.repoUrl, 'git@github.com:owner/repo.git');
   assert.equal(normalized.jobSpec.ref, 'feature/spec-bundle');
   assert.equal(normalized.jobSpec.specPath, 'agent-os/specs/example');
+  assert.equal(normalized.jobSpec.model, 'o3');
+  assert.equal(normalized.jobSpec.effort, 'medium');
 });
 
 test('normalizeRunSpec rejects absolute spec paths for git URLs', async () => {
@@ -70,6 +78,7 @@ test('normalizeRunSpec rejects absolute spec paths for git URLs', async () => {
       repo: 'git@github.com:owner/repo.git',
       spec: '/tmp/plan.md',
       runtime: 'claude',
+      effort: 'auto',
       host: 'github.com',
       detach: false,
     }),
