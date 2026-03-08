@@ -179,7 +179,7 @@ Normalization rules:
 - If `--repo` is a local path, agent-runner resolves `remote.origin.url`, defaults `--ref` to the current branch, and converts in-repo spec paths to repo-relative form
 - If `--repo` is a git URL, `--spec` must be repo-relative
 - Local repo path support is only for launch convenience; execution still happens from a fresh clone
-- `--model` is optional and passed through to the selected runtime
+- `--model` is optional and passed through to the selected runtime; if omitted, the runtime falls back to its mounted local config/default model
 - `--effort` defaults to `auto`; Claude uses its native `--effort` flag and Codex uses a config override in `exec` mode
 
 ## Web UI
