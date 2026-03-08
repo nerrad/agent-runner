@@ -131,6 +131,26 @@ Open [http://127.0.0.1:4317](http://127.0.0.1:4317).
 
 ## CLI
 
+Use the CLI directly from the repo during development:
+
+```bash
+pnpm cli --help
+```
+
+Or link the package globally so `agent-runner` is available on your shell `PATH`:
+
+```bash
+pnpm link:global
+```
+
+Remove the global link with:
+
+```bash
+pnpm unlink:global
+```
+
+The global command still runs this repo's built CLI entrypoint at `dist/server/server/cli.js`, so rebuild after local code changes before relying on the linked command.
+
 Run from a local repo checkout:
 
 ```bash

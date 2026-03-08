@@ -12,6 +12,8 @@
     "cli": "tsx src/server/cli.ts",
     "build": "vite build && tsc -p tsconfig.server.json",
     "start": "node dist/server/server/server.js",
+    "link:global": "pnpm link --global",
+    "unlink:global": "pnpm uninstall --global agent-runner",
     "test": "tsx --test src/tests/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "smoke:docker": "tsx src/tests/smoke-docker.ts",
