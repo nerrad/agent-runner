@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+  echo "usage: ar-broker-request <path> [json-payload]" >&2
+  exit 1
+fi
+
+if [[ -z "${AGENT_RUNNER_BROKER_URL:-}" || -z "${AGENT_RUNNER_BROKER_TOKEN:-}" || -z "${AGENT_RUNNER_JOB_ID:-}" ]]; then
+  echo "broker environment is not configured for this job" >&2
+  exit 1
+fi
+
+PATH_SUFFIX="$1"
+PAYLOAD="${2:-{}}"
+TMP_FILE="$(mktemp)"
+STATUS_CODE="$(
+  curl -sS -o "$TMP_FILE" -w "%{http_code}" \
+    -X POST \
+    -H 'Content-Type: application/json' \
+    "${AGENT_RUNNER_BROKER_URL}${PATH_SUFFIX}" \
+    -d "$(python3 -c 'import json,sys; payload=json.loads(sys.argv[2]); payload[\"token\"]=sys.argv[1]; print(json.dumps(payload))' "${AGENT_RUNNER_BROKER_TOKEN}" "$PAYLOAD")"
+)"
+
+python3 -c '
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+status = int(sys.argv[2])
+payload = json.loads(path.read_text() or "{}")
+stdout = payload.get("stdout", "")
+stderr = payload.get("stderr", "")
+if stdout:
+    sys.stdout.write(stdout)
+if stderr:
+    sys.stderr.write(stderr)
+if status >= 400:
+    error = payload.get("error")
+    if error:
+        sys.stderr.write(f"{error}\n")
+    sys.exit(1)
+sys.exit(int(payload.get("exitCode", 0)))
+' "$TMP_FILE" "$STATUS_CODE"

@@ -24,6 +24,8 @@ RUN apt-get update \
 
 RUN corepack enable && corepack prepare pnpm@10.30.1 --activate
 RUN npm install -g @anthropic-ai/claude-code @openai/codex
+COPY docker/worker-bin/ /usr/local/bin/
+RUN chmod +x /usr/local/bin/ar-*
 RUN mkdir -p /home/agent-runner && chmod 0777 /home/agent-runner
 
 WORKDIR /workspace

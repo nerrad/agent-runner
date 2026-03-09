@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+TITLE="${1:-}"
+BODY="${2:-}"
+BASE="${3:-}"
+PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"title": sys.argv[1], "body": sys.argv[2] or None, "base": sys.argv[3] or None}))' "$TITLE" "$BODY" "$BASE")"
+ar-broker-request "/broker/jobs/${AGENT_RUNNER_JOB_ID}/repo/open-pr" "$PAYLOAD"

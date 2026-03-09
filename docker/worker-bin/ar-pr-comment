@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+PR="${1:-}"
+BODY="${2:-}"
+PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"pr": sys.argv[1], "body": sys.argv[2]}))' "$PR" "$BODY")"
+ar-broker-request "/broker/jobs/${AGENT_RUNNER_JOB_ID}/repo/comment-pr" "$PAYLOAD"
