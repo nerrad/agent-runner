@@ -14,6 +14,7 @@ import { JobStore } from '../server/job-store.js';
 import { JobEvents } from '../server/job-events.js';
 import type { JobManagerOptions } from '../server/job-manager.js';
 import { JobManager } from '../server/job-manager.js';
+import { SecurityAuditLogger } from '../server/security-audit-log.js';
 import { AgentAdapters } from '../server/agent-adapters.js';
 
 const AUTH_ENV_KEYS = [
@@ -24,6 +25,7 @@ const AUTH_ENV_KEYS = [
 class MockGitManager {
   public changedFiles = [ ' M src/index.ts' ];
   public headSha = 'abc123';
+  public defaultBranch = 'main';
 
   async cloneRepository(_repoUrl: string, workspacePath: string): Promise<void> {
     await mkdir(workspacePath, { recursive: true });
@@ -34,6 +36,7 @@ class MockGitManager {
   }
 
   async createBranch(): Promise<void> {}
+  async getDefaultBranch(): Promise<string> { return this.defaultBranch; }
   async getHeadSha(): Promise<string> { return this.headSha; }
   async getChangedFiles(): Promise<string[]> { return this.changedFiles; }
   async commitAll(): Promise<boolean> { return true; }
@@ -225,7 +228,6 @@ function createRuntimeConfig(root: string): RuntimeConfig {
     brokerPort: 4318,
     brokerHost: 'host.docker.internal',
     brokerUrl: 'http://host.docker.internal:4318',
-    uiSessionToken: 'session-token',
   };
 }
 
@@ -251,6 +253,7 @@ function createManager(
     new AgentStateAuditor(config),
     new BrokerLeaseStore(config),
     new DockerBroker(config),
+    new SecurityAuditLogger(),
     {
       runMode: 'inline',
       ...options,
@@ -320,6 +323,7 @@ test('job manager processes a claude job through completion with direct env auth
   assert.equal(docker.lastEnv?.ANTHROPIC_API_KEY, 'test-anthropic-key');
   assert.match(finished.debugCommand ?? '', /docker exec -it container-123 bash/);
   assert.equal(finished.headSha, 'abc123');
+  assert.equal(finished.agentStateModified, false);
   assert.equal(finished.resolvedSpec?.specMode, 'bundle');
   assert.deepEqual(finished.resolvedSpec?.specFiles, [ '/spec/plan.md', '/spec/shape.md' ]);
   assert.match(log, /\[agent-runner\] cloning repository/);

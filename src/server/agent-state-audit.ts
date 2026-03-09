@@ -178,13 +178,61 @@ function isTextBuffer(buffer: Buffer): boolean {
 function buildUnifiedDiff(filePath: string, before: string, after: string): string {
   const beforeLines = before.split('\n');
   const afterLines = after.split('\n');
-  const removed = beforeLines.filter((line, index) => afterLines[index] !== line);
-  const added = afterLines.filter((line, index) => beforeLines[index] !== line);
+  const edits = diffLines(beforeLines, afterLines);
   return [
     `--- ${filePath}`,
     `+++ ${filePath}`,
-    ...removed.map((line) => `-${line}`),
-    ...added.map((line) => `+${line}`),
+    `@@ -1,${beforeLines.length} +1,${afterLines.length} @@`,
+    ...edits.map((entry) => `${entry.kind}${entry.line}`),
     '',
   ].join('\n');
+}
+
+function diffLines(
+  beforeLines: string[],
+  afterLines: string[],
+): Array<{ kind: ' ' | '+' | '-'; line: string }> {
+  const rows = beforeLines.length;
+  const cols = afterLines.length;
+  const lcs = Array.from({ length: rows + 1 }, () => Array<number>(cols + 1).fill(0));
+
+  for (let row = rows - 1; row >= 0; row -= 1) {
+    for (let col = cols - 1; col >= 0; col -= 1) {
+      lcs[row][col] = beforeLines[row] === afterLines[col]
+        ? lcs[row + 1][col + 1] + 1
+        : Math.max(lcs[row + 1][col], lcs[row][col + 1]);
+    }
+  }
+
+  const edits: Array<{ kind: ' ' | '+' | '-'; line: string }> = [];
+  let row = 0;
+  let col = 0;
+  while (row < rows && col < cols) {
+    if (beforeLines[row] === afterLines[col]) {
+      edits.push({ kind: ' ', line: beforeLines[row] });
+      row += 1;
+      col += 1;
+      continue;
+    }
+
+    if (lcs[row + 1][col] >= lcs[row][col + 1]) {
+      edits.push({ kind: '-', line: beforeLines[row] });
+      row += 1;
+    } else {
+      edits.push({ kind: '+', line: afterLines[col] });
+      col += 1;
+    }
+  }
+
+  while (row < rows) {
+    edits.push({ kind: '-', line: beforeLines[row] });
+    row += 1;
+  }
+
+  while (col < cols) {
+    edits.push({ kind: '+', line: afterLines[col] });
+    col += 1;
+  }
+
+  return edits;
 }

@@ -30,7 +30,6 @@ function createRuntimeConfig(root: string): RuntimeConfig {
     brokerPort: 4318,
     brokerHost: 'host.docker.internal',
     brokerUrl: 'http://host.docker.internal:4318',
-    uiSessionToken: 'session-token',
   };
 }
 
@@ -60,6 +59,7 @@ function createRecord(config: RuntimeConfig): JobRecord {
     artifacts: {
       logPath: path.join(artifactDir, 'run.log'),
       debugLogPath: path.join(artifactDir, 'outputs', 'debug.log'),
+      securityAuditPath: path.join(artifactDir, 'security-audit.jsonl'),
       summaryPath: path.join(artifactDir, 'summary.json'),
       gitDiffPath: path.join(artifactDir, 'git.diff'),
       agentTranscriptPath: path.join(artifactDir, 'agent-transcript.log'),
@@ -105,6 +105,7 @@ function createRuntime(config: RuntimeConfig, record: JobRecord): RuntimeContext
     brokerLeaseStore: {} as RuntimeContext['brokerLeaseStore'],
     repoBroker: {} as RuntimeContext['repoBroker'],
     dockerBroker: {} as RuntimeContext['dockerBroker'],
+    securityAuditLogger: {} as RuntimeContext['securityAuditLogger'],
     manager: manager as RuntimeContext['manager'],
   };
 }

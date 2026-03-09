@@ -9,6 +9,7 @@ import { JobEvents } from './job-events.js';
 import { JobManager, type JobManagerOptions } from './job-manager.js';
 import { JobStore } from './job-store.js';
 import { RepoBroker } from './repo-broker.js';
+import { SecurityAuditLogger } from './security-audit-log.js';
 
 export interface RuntimeContext {
   config: RuntimeConfig;
@@ -21,6 +22,7 @@ export interface RuntimeContext {
   brokerLeaseStore: BrokerLeaseStore;
   repoBroker: RepoBroker;
   dockerBroker: DockerBroker;
+  securityAuditLogger: SecurityAuditLogger;
   manager: JobManager;
 }
 
@@ -34,7 +36,20 @@ export function createRuntime(config: RuntimeConfig, options: JobManagerOptions 
   const brokerLeaseStore = new BrokerLeaseStore(config);
   const repoBroker = new RepoBroker();
   const dockerBroker = new DockerBroker(config);
-  const manager = new JobManager(config, store, events, git, docker, adapters, agentStateAuditor, brokerLeaseStore, dockerBroker, options);
+  const securityAuditLogger = new SecurityAuditLogger();
+  const manager = new JobManager(
+    config,
+    store,
+    events,
+    git,
+    docker,
+    adapters,
+    agentStateAuditor,
+    brokerLeaseStore,
+    dockerBroker,
+    securityAuditLogger,
+    options,
+  );
 
   return {
     config,
@@ -47,6 +62,7 @@ export function createRuntime(config: RuntimeConfig, options: JobManagerOptions 
     brokerLeaseStore,
     repoBroker,
     dockerBroker,
+    securityAuditLogger,
     manager,
   };
 }

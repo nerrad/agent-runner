@@ -28,6 +28,29 @@ export class GitManager {
     return result.stdout.trim();
   }
 
+  async getDefaultBranch(targetPath: string): Promise<string | undefined> {
+    const symbolicRef = await runCommand('git', [ '-C', targetPath, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD' ]);
+    if (symbolicRef.exitCode === 0 && symbolicRef.stdout.trim()) {
+      return symbolicRef.stdout.trim().replace(/^origin\//, '');
+    }
+
+    const remoteShow = await runCommand('git', [ '-C', targetPath, 'remote', 'show', 'origin' ]);
+    if (remoteShow.exitCode === 0) {
+      const headBranchLine = remoteShow.stdout
+        .split('\n')
+        .map((line) => line.trim())
+        .find((line) => line.startsWith('HEAD branch: '));
+      if (headBranchLine) {
+        const branchName = headBranchLine.replace('HEAD branch: ', '').trim();
+        if (branchName) {
+          return branchName;
+        }
+      }
+    }
+
+    return undefined;
+  }
+
   async cloneRepository(repoUrl: string, workspacePath: string, ref?: string): Promise<void> {
     await ensureDir(workspacePath);
 

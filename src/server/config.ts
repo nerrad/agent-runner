@@ -1,7 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
 import type { GitHostProfile, GitHubHost } from '../shared/types.js';
 import { loadProjectEnv } from './env-file.js';
 import { ensureDir, pathExists } from './fs-utils.js';
@@ -26,7 +25,6 @@ export interface RuntimeConfig {
   brokerPort: number;
   brokerHost: string;
   brokerUrl: string;
-  uiSessionToken: string;
 }
 
 export async function resolveDockerSocketPath(): Promise<string> {
@@ -70,7 +68,6 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
     brokerPort: Number.parseInt(process.env.AGENT_RUNNER_BROKER_PORT ?? '4318', 10),
     brokerHost: process.env.AGENT_RUNNER_BROKER_HOST ?? 'host.docker.internal',
     brokerUrl: '',
-    uiSessionToken: randomUUID(),
   };
   config.brokerUrl = `http://${config.brokerHost}:${config.brokerPort}`;
 

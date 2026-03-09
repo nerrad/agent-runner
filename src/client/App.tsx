@@ -27,6 +27,7 @@ const INITIAL_FORM: JobSpec = {
 const VIEWER_TABS = [
   { id: 'run', label: 'run.log' },
   { id: 'debug', label: 'debug.log' },
+  { id: 'securityAudit', label: 'security audit' },
   { id: 'summary', label: 'summary' },
   { id: 'finalResponse', label: 'final response' },
   { id: 'gitDiff', label: 'git diff' },
@@ -353,7 +354,7 @@ export function App(): ReactElement {
           </p>
         </div>
           <div className="hero-meta">
-            <span>127.0.0.1 only</span>
+            <span>UI on 127.0.0.1</span>
             <span>Claude Code + Codex</span>
             <span>Profile-based host access</span>
           </div>
@@ -475,7 +476,7 @@ export function App(): ReactElement {
               <p className="error-line">Dangerous mode exposes ambient repo credentials and raw host Docker access.</p>
             ) : null}
             {form.agentStateMode === 'mounted' ? (
-              <p className="error-line">Mounted agent state preserves local config/auth/state and may be modified; an audit diff is captured after the run.</p>
+              <p className="error-line">Mounted agent state preserves local config, auth, instructions, telemetry, and cost/accounting state. It is mounted read-write and audited after the run, but the audit is forensic rather than preventive.</p>
             ) : null}
             {error ? <p className="error-line">{error}</p> : null}
             <button className="primary-button" type="submit" disabled={submitting}>
@@ -562,6 +563,20 @@ export function App(): ReactElement {
                     <div>
                       <dt>Agent state</dt>
                       <dd>{selectedJob.spec.agentStateMode}</dd>
+                    </div>
+                    <div>
+                      <dt>Agent-state warning</dt>
+                      <dd>{selectedJob.spec.agentStateMode === 'mounted' ? 'Mounted host agent state is readable and writable by the worker' : 'Mounted host agent state disabled'}</dd>
+                    </div>
+                    <div>
+                      <dt>Agent-state audit</dt>
+                      <dd>{
+                        selectedJob.agentStateModified === true
+                          ? 'Changes detected'
+                          : selectedJob.agentStateModified === false
+                            ? 'No changes detected'
+                            : 'Review summary or agent-state artifacts after completion'
+                      }</dd>
                     </div>
                     <div>
                       <dt>Spec path</dt>
@@ -778,6 +793,9 @@ function renderSummaryArtifact(summary: JobSummaryArtifact): ReactElement {
 
 function artifactText(viewerTab: JobArtifactId, payload: JobArtifactPayload): string {
   if (!payload.available) {
+    if (viewerTab === 'securityAudit') {
+      return 'No blocked activity was recorded for this job.';
+    }
     return `${payload.label} is not available yet.`;
   }
 
@@ -792,6 +810,8 @@ function artifactText(viewerTab: JobArtifactId, payload: JobArtifactPayload): st
       return 'No summary captured for this job.';
     case 'transcript':
       return 'No transcript captured for this job.';
+    case 'securityAudit':
+      return 'No blocked activity was recorded for this job.';
     case 'finalResponse':
       return 'No final response artifact captured for this job.';
     case 'prompt':
@@ -815,6 +835,8 @@ function viewerTabLabel(viewerTab: ViewerTabId): string {
       return 'Debug log';
     case 'summary':
       return 'Summary';
+    case 'securityAudit':
+      return 'Security audit log';
     case 'finalResponse':
       return 'Final response';
     case 'gitDiff':

@@ -28,7 +28,6 @@ function createConfig(root: string): RuntimeConfig {
     brokerPort: 4318,
     brokerHost: 'host.docker.internal',
     brokerUrl: 'http://host.docker.internal:4318',
-    uiSessionToken: 'session-token',
   };
 }
 

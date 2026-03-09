@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, open, readFile, unlink, writeFile } from 'node:fs/promises';
+import { appendFile, open, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentResult, JobRecord, JobSpec, JobStatus } from '../shared/types.js';
 import { AgentResultSchema, JobSpecSchema } from '../shared/types.js';
@@ -16,6 +16,7 @@ import { launchDetachedJobRunner } from './job-launcher.js';
 import { buildJobPaths } from './paths.js';
 import { AgentAdapters } from './agent-adapters.js';
 import { runCommand } from './process-utils.js';
+import type { SecurityAuditLogger } from './security-audit-log.js';
 import { stageSpecBundle } from './spec-resolver.js';
 import { JobStore } from './job-store.js';
 
@@ -82,6 +83,7 @@ export class JobManager {
     private readonly agentStateAuditor: AgentStateAuditor,
     private readonly brokerLeaseStore: BrokerLeaseStore,
     private readonly dockerBroker: DockerBroker,
+    private readonly securityAuditLogger: SecurityAuditLogger,
     options: JobManagerOptions = {},
   ) {
     this.activeLockPath = path.join(this.config.appDir, 'active-job.lock');
@@ -113,6 +115,7 @@ export class JobManager {
       status: 'queued',
       workspacePath: paths.workspacePath,
       branchName,
+      defaultBranch: undefined,
       createdAt: now,
       updatedAt: now,
       artifacts: paths.artifacts,
@@ -164,6 +167,7 @@ export class JobManager {
     }
 
     await this.cleanupBrokeredDockerResources(record);
+    await this.revokeBrokerLease(jobId);
 
     if (TERMINAL_STATUSES.has(record.status)) {
       return record;
@@ -201,6 +205,7 @@ export class JobManager {
       const record = await this.requireJob(jobId);
       if (TERMINAL_STATUSES.has(record.status)) {
         await this.cleanupBrokeredDockerResources(record);
+        await this.revokeBrokerLease(jobId);
         return;
       }
 
@@ -213,6 +218,7 @@ export class JobManager {
           endedAt: new Date().toISOString(),
           blockerReason: error instanceof Error ? error.message : String(error),
         });
+        await this.revokeBrokerLease(jobId);
         await this.cleanupBrokeredDockerResources({
           ...record,
           status: 'failed',
@@ -243,6 +249,7 @@ export class JobManager {
 
     await writeFile(record.artifacts.logPath, '', 'utf8');
     await writeFile(record.artifacts.debugLogPath, '', 'utf8');
+    await writeFile(record.artifacts.securityAuditPath, '', 'utf8');
     await writeFile(record.artifacts.agentTranscriptPath, '', 'utf8');
 
     if (!runtimeAuth.ok) {
@@ -264,8 +271,10 @@ export class JobManager {
     await safeRemove(record.workspacePath);
     await ensureDir(path.dirname(record.workspacePath));
     await this.git.cloneRepository(record.spec.repoUrl, record.workspacePath, record.spec.ref);
+    const defaultBranch = await this.git.getDefaultBranch(record.workspacePath);
     await this.git.createBranch(record.workspacePath, record.branchName);
     record = await this.updateRecord(record, {
+      defaultBranch,
       headSha: await this.git.getHeadSha(record.workspacePath),
     });
 
@@ -333,6 +342,9 @@ export class JobManager {
         const agentStateAfter = await this.agentStateAuditor.captureSnapshot();
         const summary = await this.agentStateAuditor.writeAudit(record.artifacts, agentStateBefore, agentStateAfter);
         agentStateAudit = { changed: summary.changed };
+        record = await this.updateRecord(record, {
+          agentStateModified: summary.changed,
+        });
         agentStateBefore = null;
       }
     }
@@ -340,6 +352,7 @@ export class JobManager {
     const latestRecord = await this.requireJob(record.id);
     if (latestRecord.status === 'canceled') {
       await this.cleanupBrokeredDockerResources(latestRecord);
+      await this.revokeBrokerLease(latestRecord.id);
       await this.updateRecord(latestRecord, {
         endedAt: latestRecord.endedAt ?? new Date().toISOString(),
       });
@@ -348,6 +361,7 @@ export class JobManager {
 
     if (authLoopState.blockerReason) {
       await this.cleanupBrokeredDockerResources(latestRecord);
+      await this.revokeBrokerLease(latestRecord.id);
       await this.updateRecord(latestRecord, {
         status: 'failed',
         endedAt: new Date().toISOString(),
@@ -380,6 +394,7 @@ export class JobManager {
 
     if (dockerResult.exitCode !== 0 && !agentResult) {
       await this.cleanupBrokeredDockerResources(record);
+      await this.revokeBrokerLease(record.id);
       await this.updateRecord(record, {
         status: 'failed',
         endedAt: new Date().toISOString(),
@@ -394,6 +409,7 @@ export class JobManager {
       endedAt: new Date().toISOString(),
     });
     await this.cleanupBrokeredDockerResources(completedRecord);
+    await this.revokeBrokerLease(completedRecord.id);
   }
 
   private async writeArtifacts(
@@ -626,8 +642,17 @@ export class JobManager {
       return false;
     }
 
-    await safeRemove(this.activeLockPath);
-    return true;
+    const stalePath = `${this.activeLockPath}.stale-${process.pid}-${Date.now()}`;
+    try {
+      await rename(this.activeLockPath, stalePath);
+      await safeRemove(stalePath);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return true;
+      }
+      return false;
+    }
   }
 
   private isProcessAlive(pid: number): boolean {
@@ -693,11 +718,19 @@ export class JobManager {
 
   private normalizeJobSpec(spec: JobSpec): JobSpec {
     const capabilityProfile = spec.capabilityProfile ?? 'safe';
-    const repoAccessMode = capabilityProfile === 'dangerous'
-      ? (spec.repoAccessMode === 'none' ? 'ambient' : spec.repoAccessMode)
-      : capabilityProfile === 'safe'
-        ? 'none'
-        : (spec.repoAccessMode === 'ambient' || spec.repoAccessMode === 'none' ? 'broker' : spec.repoAccessMode);
+    const repoAccessMode = spec.repoAccessMode ?? 'none';
+
+    if (capabilityProfile === 'dangerous' && repoAccessMode === 'none') {
+      throw new Error('dangerous jobs cannot use repoAccessMode=none; choose ambient or a safer profile');
+    }
+
+    if (capabilityProfile === 'safe' && repoAccessMode !== 'none') {
+      throw new Error('safe jobs must use repoAccessMode=none');
+    }
+
+    if ((capabilityProfile === 'repo-broker' || capabilityProfile === 'docker-broker') && repoAccessMode !== 'broker') {
+      throw new Error(`${capabilityProfile} jobs must use repoAccessMode=broker`);
+    }
 
     return {
       ...spec,
@@ -723,6 +756,10 @@ export class JobManager {
       return await this.brokerLeaseStore.issue(record);
     }
     return null;
+  }
+
+  private async revokeBrokerLease(jobId: string): Promise<void> {
+    await this.brokerLeaseStore.revoke(jobId);
   }
 
   private async cleanupBrokeredDockerResources(record: JobRecord): Promise<void> {

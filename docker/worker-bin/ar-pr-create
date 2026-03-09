@@ -3,5 +3,6 @@ set -euo pipefail
 TITLE="${1:-}"
 BODY="${2:-}"
 BASE="${3:-}"
-PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"title": sys.argv[1], "body": sys.argv[2] or None, "base": sys.argv[3] or None}))' "$TITLE" "$BODY" "$BASE")"
+HEAD="${4:-}"
+PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"title": sys.argv[1], "body": sys.argv[2] or None, "base": sys.argv[3] or None, "head": sys.argv[4] or None}))' "$TITLE" "$BODY" "$BASE" "$HEAD")"
 ar-broker-request "/broker/jobs/${AGENT_RUNNER_JOB_ID}/repo/open-pr" "$PAYLOAD"

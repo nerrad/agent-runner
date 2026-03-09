@@ -12,14 +12,18 @@ if [[ -z "${AGENT_RUNNER_BROKER_URL:-}" || -z "${AGENT_RUNNER_BROKER_TOKEN:-}" |
 fi
 
 PATH_SUFFIX="$1"
-PAYLOAD="${2:-{}}"
+if [[ $# -ge 2 ]]; then
+  PAYLOAD="$2"
+else
+  PAYLOAD='{}'
+fi
 TMP_FILE="$(mktemp)"
 STATUS_CODE="$(
   curl -sS -o "$TMP_FILE" -w "%{http_code}" \
     -X POST \
     -H 'Content-Type: application/json' \
     "${AGENT_RUNNER_BROKER_URL}${PATH_SUFFIX}" \
-    -d "$(python3 -c 'import json,sys; payload=json.loads(sys.argv[2]); payload[\"token\"]=sys.argv[1]; print(json.dumps(payload))' "${AGENT_RUNNER_BROKER_TOKEN}" "$PAYLOAD")"
+    -d "$(python3 -c 'import json,sys; payload=json.loads(sys.argv[2]); payload["token"]=sys.argv[1]; print(json.dumps(payload))' "${AGENT_RUNNER_BROKER_TOKEN}" "$PAYLOAD")"
 )"
 
 python3 -c '

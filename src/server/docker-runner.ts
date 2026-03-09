@@ -32,7 +32,7 @@ export class DockerRunner {
   }
 
   async runJob(request: DockerRunRequest): Promise<{ containerId: string; exitCode: number }> {
-    const dockerArgs = this.buildRunArgs(request);
+    const dockerArgs = await this.buildRunArgs(request);
     const runResult = await runCommand('docker', dockerArgs);
     if (runResult.exitCode !== 0) {
       throw new Error(runResult.stderr || 'Failed to start worker container');
@@ -56,12 +56,13 @@ export class DockerRunner {
     return { containerId, exitCode: Number.isNaN(exitCode) ? 1 : exitCode };
   }
 
-  buildRunArgs(request: DockerRunRequest): string[] {
+  async buildRunArgs(request: DockerRunRequest): Promise<string[]> {
     const containerName = `agent-runner-${request.job.id}`;
     const sshMountTarget = '/tmp/agent-runner-ssh.sock';
     const ghMountTarget = '/gh-config';
     const containerHome = '/home/agent-runner';
     const { capabilityProfile, agentStateMode } = request.job.spec;
+    const env = await this.resolveContainerEnv(request);
 
     const dockerArgs = [
       'run',
@@ -91,6 +92,11 @@ export class DockerRunner {
       `AGENT_RUNNER_PROFILE=${capabilityProfile}`,
     ];
 
+    if (capabilityProfile !== 'dangerous') {
+      dockerArgs.push('--cap-drop=ALL');
+      dockerArgs.push('--security-opt=no-new-privileges');
+    }
+
     if (capabilityProfile === 'dangerous') {
       dockerArgs.push('--mount', `type=bind,src=${path.dirname(request.job.artifacts.logPath)},dst=/artifacts`);
       dockerArgs.push('--mount', `type=bind,src=${this.config.dockerSocketPath},dst=/var/run/docker.sock`);
@@ -110,12 +116,39 @@ export class DockerRunner {
       dockerArgs.push('--env', `SSH_AUTH_SOCK=${sshMountTarget}`);
     }
 
-    for (const [ key, value ] of Object.entries(request.env)) {
+    for (const [ key, value ] of Object.entries(env)) {
       dockerArgs.push('--env', `${key}=${value}`);
     }
 
     dockerArgs.push(this.config.workerImageTag, ...request.command);
     return dockerArgs;
+  }
+
+  private async resolveContainerEnv(request: DockerRunRequest): Promise<Record<string, string>> {
+    const env = { ...request.env };
+    const { capabilityProfile } = request.job.spec;
+
+    if (capabilityProfile === 'repo-broker' || capabilityProfile === 'docker-broker') {
+      env.AGENT_RUNNER_JOB_ID ??= request.job.id;
+      env.AGENT_RUNNER_BROKER_URL ??= this.config.brokerUrl;
+
+      if (!env.AGENT_RUNNER_BROKER_TOKEN) {
+        try {
+          const leasePath = path.join(this.config.jobsDir, request.job.id, 'broker-lease.json');
+          const raw = await readFile(leasePath, 'utf8');
+          const lease = JSON.parse(raw) as { token?: string };
+          if (lease.token) {
+            env.AGENT_RUNNER_BROKER_TOKEN = lease.token;
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+            throw error;
+          }
+        }
+      }
+    }
+
+    return env;
   }
 
   async stopJob(containerId: string): Promise<void> {

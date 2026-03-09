@@ -28,7 +28,6 @@ function createRuntimeConfig(root: string): RuntimeConfig {
     brokerPort: 4318,
     brokerHost: 'host.docker.internal',
     brokerUrl: 'http://host.docker.internal:4318',
-    uiSessionToken: 'session-token',
   };
 }
 
@@ -73,6 +72,7 @@ test('job store backfills debugLogPath for legacy persisted jobs', async () => {
   const record = await store.get(jobId);
 
   assert.ok(record);
+  assert.equal(record.artifacts.securityAuditPath, '/tmp/agent-runner/artifacts/legacy-job/security-audit.jsonl');
   assert.equal(record.artifacts.debugLogPath, '/tmp/agent-runner/artifacts/legacy-job/outputs/debug.log');
   assert.equal(record.artifacts.inputsDir, '/tmp/agent-runner/artifacts/legacy-job/inputs');
   assert.equal(record.artifacts.outputsDir, '/tmp/agent-runner/artifacts/legacy-job/outputs');

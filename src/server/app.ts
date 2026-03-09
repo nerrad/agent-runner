@@ -199,6 +199,8 @@ function getArtifactDescriptor(
       return { absolutePath: record.artifacts.gitDiffPath, label: 'git diff' };
     case 'transcript':
       return { absolutePath: record.artifacts.agentTranscriptPath, label: 'transcript' };
+    case 'securityAudit':
+      return { absolutePath: record.artifacts.securityAuditPath, label: 'security audit log' };
     case 'finalResponse':
       return { absolutePath: record.artifacts.finalResponsePath, label: 'final response' };
     case 'prompt':

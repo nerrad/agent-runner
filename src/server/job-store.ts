@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { JobRecord } from '../shared/types.js';
@@ -19,7 +20,7 @@ export class JobStore {
     if (!raw) {
       return null;
     }
-    const normalized = normalizeLegacyJobRecord(raw);
+    const normalized = await normalizeLegacyJobRecord(raw);
     const parsed = JobRecordSchema.parse(normalized.record);
     if (normalized.changed) {
       await this.save(parsed);
@@ -46,7 +47,7 @@ export class JobStore {
   }
 }
 
-function normalizeLegacyJobRecord(raw: unknown): { record: unknown; changed: boolean } {
+async function normalizeLegacyJobRecord(raw: unknown): Promise<{ record: unknown; changed: boolean }> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return { record: raw, changed: false };
   }
@@ -61,6 +62,8 @@ function normalizeLegacyJobRecord(raw: unknown): { record: unknown; changed: boo
   if (
     typeof artifactRecord.debugLogPath === 'string'
     && artifactRecord.debugLogPath.length > 0
+    && typeof artifactRecord.securityAuditPath === 'string'
+    && artifactRecord.securityAuditPath.length > 0
     && typeof artifactRecord.inputsDir === 'string'
     && typeof artifactRecord.outputsDir === 'string'
     && typeof artifactRecord.agentStateSummaryPath === 'string'
@@ -79,15 +82,25 @@ function normalizeLegacyJobRecord(raw: unknown): { record: unknown; changed: boo
       ...record,
       artifacts: {
         ...artifactRecord,
+        securityAuditPath: path.join(path.dirname(artifactRecord.logPath), 'security-audit.jsonl'),
         debugLogPath: path.join(path.dirname(artifactRecord.logPath), 'outputs', 'debug.log'),
         finalResponsePath: typeof artifactRecord.finalResponsePath === 'string'
-          ? path.join(path.dirname(artifactRecord.logPath), 'outputs', path.basename(artifactRecord.finalResponsePath))
+          ? preserveLegacyPath(
+            artifactRecord.finalResponsePath,
+            path.join(path.dirname(artifactRecord.logPath), 'outputs', path.basename(artifactRecord.finalResponsePath)),
+          )
           : path.join(path.dirname(artifactRecord.logPath), 'outputs', 'final-response.json'),
         schemaPath: typeof artifactRecord.schemaPath === 'string'
-          ? path.join(path.dirname(artifactRecord.logPath), 'inputs', path.basename(artifactRecord.schemaPath))
+          ? preserveLegacyPath(
+            artifactRecord.schemaPath,
+            path.join(path.dirname(artifactRecord.logPath), 'inputs', path.basename(artifactRecord.schemaPath)),
+          )
           : path.join(path.dirname(artifactRecord.logPath), 'inputs', 'result-schema.json'),
         promptPath: typeof artifactRecord.promptPath === 'string'
-          ? path.join(path.dirname(artifactRecord.logPath), 'inputs', path.basename(artifactRecord.promptPath))
+          ? preserveLegacyPath(
+            artifactRecord.promptPath,
+            path.join(path.dirname(artifactRecord.logPath), 'inputs', path.basename(artifactRecord.promptPath)),
+          )
           : path.join(path.dirname(artifactRecord.logPath), 'inputs', 'prompt.txt'),
         inputsDir: path.join(path.dirname(artifactRecord.logPath), 'inputs'),
         outputsDir: path.join(path.dirname(artifactRecord.logPath), 'outputs'),
@@ -96,4 +109,8 @@ function normalizeLegacyJobRecord(raw: unknown): { record: unknown; changed: boo
       },
     },
   };
+}
+
+function preserveLegacyPath(legacyPath: string, migratedPath: string): string {
+  return existsSync(legacyPath) ? legacyPath : migratedPath;
 }

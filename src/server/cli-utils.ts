@@ -271,14 +271,24 @@ function normalizeRepoAccess(
   requested: JobSpec['repoAccessMode'],
 ): JobSpec['repoAccessMode'] {
   if (profile === 'dangerous') {
-    return requested === 'none' ? 'ambient' : requested;
+    if (requested === 'none') {
+      throw new Error('dangerous jobs cannot use --repo-access none');
+    }
+    return requested;
   }
 
   if (profile === 'safe') {
-    return 'none';
+    if (requested !== 'none') {
+      throw new Error('safe jobs must use --repo-access none');
+    }
+    return requested;
   }
 
-  return requested === 'ambient' ? 'broker' : requested === 'none' ? 'broker' : requested;
+  if (requested !== 'broker') {
+    throw new Error(`${profile} jobs must use --repo-access broker`);
+  }
+
+  return requested;
 }
 
 async function resolveAbsoluteSpecPath(spec: string, specRoot: string): Promise<string> {

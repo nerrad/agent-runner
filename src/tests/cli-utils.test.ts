@@ -28,7 +28,6 @@ function createRuntimeConfig(root: string): RuntimeConfig {
     brokerPort: 4318,
     brokerHost: 'host.docker.internal',
     brokerUrl: 'http://host.docker.internal:4318',
-    uiSessionToken: 'session-token',
   };
 }
 
@@ -171,6 +170,7 @@ test('formatJobSummary includes blocker reasons when present', () => {
     artifacts: {
       logPath: '/tmp/log',
       debugLogPath: '/tmp/outputs/debug.log',
+      securityAuditPath: '/tmp/security-audit.jsonl',
       summaryPath: '/tmp/summary.json',
       gitDiffPath: '/tmp/git.diff',
       agentTranscriptPath: '/tmp/transcript.log',

@@ -157,7 +157,10 @@ function buildAgentPrompt(spec: JobSpec, branchName: string): string {
   }
 
   if (spec.agentStateMode === 'mounted') {
-    lines.push('', 'Mounted agent state:', '- Host agent config, auth, and instruction state are mounted and may be audited after the run.');
+    lines.push('', 'Mounted agent state:', '- Host agent config, auth, instructions, telemetry, and cost/accounting state may be mounted read-write.');
+    lines.push('- Any changes to mounted agent state are audited after the run, but the audit is forensic rather than preventive.');
+  } else {
+    lines.push('', 'Mounted agent state:', '- Mounted agent state is disabled for stronger isolation.');
   }
 
   return lines.join('\n');

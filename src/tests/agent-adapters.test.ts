@@ -33,6 +33,7 @@ async function createJobRecord(agentRuntime: 'claude' | 'codex', overrides: Part
     artifacts: {
       logPath: path.join(tempDir, 'run.log'),
       debugLogPath: path.join(tempDir, 'outputs', 'debug.log'),
+      securityAuditPath: path.join(tempDir, 'security-audit.jsonl'),
       summaryPath: path.join(tempDir, 'summary.json'),
       gitDiffPath: path.join(tempDir, 'git.diff'),
       agentTranscriptPath: path.join(tempDir, 'agent-transcript.log'),

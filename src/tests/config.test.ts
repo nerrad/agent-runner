@@ -27,7 +27,6 @@ const runtimeConfig: RuntimeConfig = {
   brokerPort: 4318,
   brokerHost: 'host.docker.internal',
   brokerUrl: 'http://host.docker.internal:4318',
-  uiSessionToken: 'session-token',
 };
 
 test('createGitHostProfile adds proxy only for non-github.com hosts', () => {
@@ -49,6 +48,7 @@ test('buildJobPaths creates stable artifact layout', () => {
   assert.equal(paths.workspacePath, '/tmp/agent-runner/workspaces/job-123/repo');
   assert.equal(paths.artifacts.summaryPath, '/tmp/agent-runner/artifacts/job-123/summary.json');
   assert.equal(paths.artifacts.debugLogPath, '/tmp/agent-runner/artifacts/job-123/outputs/debug.log');
+  assert.equal(paths.artifacts.securityAuditPath, '/tmp/agent-runner/artifacts/job-123/security-audit.jsonl');
   assert.equal(paths.artifacts.finalResponsePath, '/tmp/agent-runner/artifacts/job-123/outputs/final-response.json');
   assert.equal(paths.artifacts.specBundlePath, '/tmp/agent-runner/artifacts/job-123/spec');
   assert.equal(paths.artifacts.inputsDir, '/tmp/agent-runner/artifacts/job-123/inputs');

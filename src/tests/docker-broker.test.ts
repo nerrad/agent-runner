@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import type { JobRecord } from '../shared/types.js';
 import type { RuntimeConfig } from '../server/config.js';
 import { DockerBroker } from '../server/docker-broker.js';
@@ -28,7 +28,6 @@ function createRuntimeConfig(root: string): RuntimeConfig {
     brokerPort: 4318,
     brokerHost: 'host.docker.internal',
     brokerUrl: 'http://host.docker.internal:4318',
-    uiSessionToken: 'session-token',
   };
 }
 
@@ -56,6 +55,7 @@ function createJobRecord(root: string): JobRecord {
     artifacts: {
       logPath: path.join(artifactDir, 'run.log'),
       debugLogPath: path.join(artifactDir, 'outputs', 'debug.log'),
+      securityAuditPath: path.join(artifactDir, 'security-audit.jsonl'),
       summaryPath: path.join(artifactDir, 'summary.json'),
       gitDiffPath: path.join(artifactDir, 'git.diff'),
       agentTranscriptPath: path.join(artifactDir, 'agent-transcript.log'),
@@ -96,6 +96,26 @@ test('docker broker labels and tracks brokered container runs', async () => {
       return { stdout: '', stderr: '', exitCode: 0 };
     }
 
+    if (command === 'docker' && args[0] === 'inspect') {
+      return {
+        stdout: JSON.stringify([ {
+          HostConfig: {
+            Privileged: false,
+            NetworkMode: 'bridge',
+            PidMode: '',
+            IpcMode: '',
+            UsernsMode: '',
+            CapAdd: [],
+            Devices: [],
+            SecurityOpt: [],
+          },
+          Mounts: [],
+        } ]),
+        stderr: '',
+        exitCode: 0,
+      };
+    }
+
     return { stdout: '', stderr: '', exitCode: 0 };
   });
 
@@ -114,8 +134,8 @@ test('docker broker rejects workspace-external bind mounts', async () => {
   const broker = new DockerBroker(config);
 
   await assert.rejects(
-    () => broker.containerRun(record, [ '/etc/passwd:/data', 'alpine' ]),
-    /escapes workspace/,
+    () => broker.containerRun(record, [ '--volume=/etc/passwd:/data', 'alpine' ]),
+    /Blocked Docker option: --volume/,
   );
 });
 
@@ -138,6 +158,26 @@ test('docker broker cleanup removes tracked resources and clears state', async (
 
     if (command === 'docker' && args[0] === 'volume') {
       return { stdout: 'volume-123\n', stderr: '', exitCode: 0 };
+    }
+
+    if (command === 'docker' && args[0] === 'inspect') {
+      return {
+        stdout: JSON.stringify([ {
+          HostConfig: {
+            Privileged: false,
+            NetworkMode: 'bridge',
+            PidMode: '',
+            IpcMode: '',
+            UsernsMode: '',
+            CapAdd: [],
+            Devices: [],
+            SecurityOpt: [],
+          },
+          Mounts: [],
+        } ]),
+        stderr: '',
+        exitCode: 0,
+      };
     }
 
     return { stdout: '', stderr: '', exitCode: 0 };
@@ -170,5 +210,94 @@ test('docker broker restricts compose exec to owned services', async () => {
   await assert.rejects(
     () => broker.composeExec(record, 'wordpress', [ 'php', '-v' ]),
     /not owned by job/,
+  );
+});
+
+test('docker broker places compose up flags after the subcommand and accepts -d', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-docker-broker-compose-'));
+  const config = createRuntimeConfig(root);
+  const record = createJobRecord(root);
+  await mkdir(record.workspacePath, { recursive: true });
+  await writeFile(path.join(record.workspacePath, 'docker-compose.smoke.yml'), 'services: {}\n', 'utf8');
+
+  const calls: Array<{ command: string; args: string[] }> = [];
+  const broker = new DockerBroker(config, async (command, args, options = {}) => {
+    calls.push({ command, args });
+
+    if (command === 'docker' && args[0] === 'compose' && args.includes('config')) {
+      return { stdout: JSON.stringify({ services: {} }), stderr: '', exitCode: 0 };
+    }
+    if (command === 'docker' && args[0] === 'compose' && args.includes('up')) {
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }
+    if (command === 'docker' && args[0] === 'ps') {
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }
+    if (command === 'docker' && (args[0] === 'network' || args[0] === 'volume')) {
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  await broker.compose(record, 'up', [ '-f', 'docker-compose.smoke.yml', '-d', 'smoke' ]);
+  const composeUp = calls.find((call) => call.command === 'docker' && call.args.includes('up'));
+  assert.ok(composeUp);
+  assert.deepEqual(
+    composeUp?.args,
+    [ 'compose', '-p', 'agent-runner-job123', '-f', 'docker-compose.smoke.yml', 'up', '-d', 'smoke' ],
+  );
+});
+
+test('docker broker accepts repo-local compose bind mounts when workspace resolves through /private/tmp', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-docker-broker-bind-'));
+  const config = createRuntimeConfig(root);
+  const record = createJobRecord(root);
+  await mkdir(record.workspacePath, { recursive: true });
+  await writeFile(
+    path.join(record.workspacePath, 'docker-compose.smoke.yml'),
+    [
+      'services:',
+      '  smoke:',
+      '    image: alpine:3.20',
+      '    command: ["sh", "-lc", "sleep 1"]',
+      '    volumes:',
+      '      - .:/workspace',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  const broker = new DockerBroker(config, async (command, args) => {
+    if (command === 'docker' && args[0] === 'compose' && args.includes('config')) {
+      return {
+        stdout: JSON.stringify({
+          services: {
+            smoke: {
+              image: 'alpine:3.20',
+              volumes: [ '.:/workspace' ],
+            },
+          },
+        }),
+        stderr: '',
+        exitCode: 0,
+      };
+    }
+    if (command === 'docker' && args[0] === 'compose' && args.includes('up')) {
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }
+    if (command === 'docker' && args[0] === 'ps') {
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }
+    if (command === 'docker' && args[0] === 'network') {
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }
+    if (command === 'docker' && args[0] === 'volume') {
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  await assert.doesNotReject(
+    () => broker.compose(record, 'up', [ '-f', 'docker-compose.smoke.yml', '--detach', 'smoke' ]),
   );
 });
