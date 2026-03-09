@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo 'Usage: ar-emit progress "<message>"' >&2
+}
+
+if [[ $# -ne 2 || "$1" != "progress" ]]; then
+  usage
+  exit 1
+fi
+
+message="$2"
+
+if [[ -z "${message//[[:space:]]/}" ]]; then
+  usage
+  exit 1
+fi
+
+if [[ "$message" == *$'\n'* || "$message" == *$'\r'* ]]; then
+  echo 'Progress message must be single-line.' >&2
+  exit 1
+fi
+
+output_dir="${AR_OUTPUTS_DIR:-/outputs}"
+output_path="${output_dir}/progress.ndjson"
+
+mkdir -p "$output_dir"
+
+python3 - "$output_path" "$message" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+output_path = sys.argv[1]
+message = sys.argv[2]
+event = {
+    "kind": "progress",
+    "message": message,
+    "at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+}
+
+with open(output_path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(event) + "\n")
+PY

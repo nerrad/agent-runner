@@ -27,6 +27,8 @@ RUN npm install -g @anthropic-ai/claude-code @openai/codex
 COPY docker/worker-bin/ /usr/local/bin/
 RUN chmod +x /usr/local/bin/ar-*
 RUN mkdir -p /home/agent-runner && chmod 0777 /home/agent-runner
+COPY docker/worker-bin/ar-emit /usr/local/bin/ar-emit
+RUN chmod 0755 /usr/local/bin/ar-emit
 
 WORKDIR /workspace
 

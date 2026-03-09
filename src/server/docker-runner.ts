@@ -98,6 +98,8 @@ export class DockerRunner {
     }
 
     if (capabilityProfile === 'dangerous') {
+      // OrbStack exposes the mounted Docker socket as root:root inside the worker.
+      dockerArgs.push('--group-add', '0');
       dockerArgs.push('--mount', `type=bind,src=${path.dirname(request.job.artifacts.logPath)},dst=/artifacts`);
       dockerArgs.push('--mount', `type=bind,src=${this.config.dockerSocketPath},dst=/var/run/docker.sock`);
       dockerArgs.push('--env', `DOCKER_HOST=unix:///var/run/docker.sock`);

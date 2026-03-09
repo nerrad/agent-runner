@@ -241,12 +241,13 @@ function createManager(
   config: RuntimeConfig,
   docker: MockDockerRunner,
   options: JobManagerOptions = {},
-): { manager: JobManager; store: JobStore } {
+): { manager: JobManager; store: JobStore; events: JobEvents } {
   const store = new JobStore(config);
+  const events = new JobEvents();
   const manager = new JobManager(
     config,
     store,
-    new JobEvents(),
+    events,
     new MockGitManager() as never,
     docker as never,
     new AgentAdapters(),
@@ -260,7 +261,7 @@ function createManager(
     },
   );
 
-  return { manager, store };
+  return { manager, store, events };
 }
 
 async function waitForJob(
@@ -338,6 +339,55 @@ test('job manager processes a claude job through completion with direct env auth
   clearAuthEnv();
 });
 
+class ProgressDockerRunner extends MockDockerRunner {
+  override async runJob(request: DockerRunRequest): Promise<{ containerId: string; exitCode: number }> {
+    this.runCount += 1;
+    this.lastEnv = { ...request.env };
+    await request.onStart?.('container-progress');
+    await request.onLog('starting\n');
+    await writeFile(
+      request.job.artifacts.progressEventsPath,
+      `${JSON.stringify({ kind: 'progress', message: 'syncing files', at: '2026-03-09T12:00:00Z' })}\n`,
+      'utf8',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await writeFile(request.job.artifacts.finalResponsePath, JSON.stringify({
+      status: 'completed',
+      summary: 'done',
+      blockerReason: null,
+    }), 'utf8');
+    return {
+      containerId: 'container-progress',
+      exitCode: 0,
+    };
+  }
+}
+
+class InvalidProgressDockerRunner extends MockDockerRunner {
+  override async runJob(request: DockerRunRequest): Promise<{ containerId: string; exitCode: number }> {
+    this.runCount += 1;
+    this.lastEnv = { ...request.env };
+    await request.onStart?.('container-invalid-progress');
+    await writeFile(request.job.artifacts.progressEventsPath, '{\"kind\":\"progress\"', 'utf8');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await writeFile(
+      request.job.artifacts.progressEventsPath,
+      `${'{\"kind\":\"progress\"'}\n${JSON.stringify({ kind: 'progress', message: 'finishing', at: '2026-03-09T12:01:00Z' })}\n`,
+      'utf8',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await writeFile(request.job.artifacts.finalResponsePath, JSON.stringify({
+      status: 'completed',
+      summary: 'done',
+      blockerReason: null,
+    }), 'utf8');
+    return {
+      containerId: 'container-invalid-progress',
+      exitCode: 0,
+    };
+  }
+}
+
 test('claude jobs fail before docker launch when no auth is available', async () => {
   clearAuthEnv();
 
@@ -353,6 +403,63 @@ test('claude jobs fail before docker launch when no auth is available', async ()
   assert.equal(docker.ensureImageBuiltCount, 0);
   assert.equal(docker.runCount, 0);
   assert.match(log, /ANTHROPIC_API_KEY/);
+});
+
+test('job manager ingests progress sidecar events into the log, transcript, and live event stream', async () => {
+  clearAuthEnv();
+  process.env.OPENAI_API_KEY = 'test-openai-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-progress-'));
+  const docker = new ProgressDockerRunner();
+  const { manager, store, events } = createManager(createRuntimeConfig(root), docker, {
+    debugPollIntervalMs: 10,
+    heartbeatIntervalMs: 100,
+  });
+
+  const job = await createJob(manager, 'codex');
+  const liveChunks: string[] = [];
+  const unsubscribe = events.subscribe(job.id, (event) => {
+    if (event.type === 'log' && event.log) {
+      liveChunks.push(event.log.chunk);
+    }
+  });
+
+  try {
+    const finished = await waitForJob(store, job.id, [ 'completed' ]);
+    const log = await readFile(finished.artifacts.logPath, 'utf8');
+    const transcript = await readFile(finished.artifacts.agentTranscriptPath, 'utf8');
+
+    assert.match(log, /\[progress\] syncing files/);
+    assert.match(transcript, /\[progress\] syncing files/);
+    assert.ok(liveChunks.some((chunk) => chunk.includes('[progress] syncing files')));
+  } finally {
+    unsubscribe();
+    clearAuthEnv();
+  }
+});
+
+test('job manager ignores malformed progress events with one warning and continues the job', async () => {
+  clearAuthEnv();
+  process.env.OPENAI_API_KEY = 'test-openai-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-invalid-progress-'));
+  const docker = new InvalidProgressDockerRunner();
+  const { manager, store } = createManager(createRuntimeConfig(root), docker, {
+    debugPollIntervalMs: 10,
+  });
+
+  const job = await createJob(manager, 'codex');
+  const finished = await waitForJob(store, job.id, [ 'completed' ]);
+  const log = await readFile(finished.artifacts.logPath, 'utf8');
+  const transcript = await readFile(finished.artifacts.agentTranscriptPath, 'utf8');
+  const warningMatches = log.match(/\[agent-runner\] ignoring invalid progress sidecar event/g) ?? [];
+
+  assert.equal(finished.status, 'completed');
+  assert.equal(warningMatches.length, 1);
+  assert.match(log, /\[progress\] finishing/);
+  assert.match(transcript, /\[progress\] finishing/);
+
+  clearAuthEnv();
 });
 
 test('codex jobs fail before docker launch when no key can be automatically resolved', async () => {

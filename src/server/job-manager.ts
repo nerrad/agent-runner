@@ -64,6 +64,11 @@ interface DebugLogFollower {
   stop(): Promise<void>;
 }
 
+interface ProgressFollowerState {
+  warnedInvalidEvent: boolean;
+  bufferedLine: string;
+}
+
 export type JobLogKind = 'run' | 'debug';
 
 export class JobManager {
@@ -250,6 +255,7 @@ export class JobManager {
     await writeFile(record.artifacts.logPath, '', 'utf8');
     await writeFile(record.artifacts.debugLogPath, '', 'utf8');
     await writeFile(record.artifacts.securityAuditPath, '', 'utf8');
+    await writeFile(record.artifacts.progressEventsPath, '', 'utf8');
     await writeFile(record.artifacts.agentTranscriptPath, '', 'utf8');
 
     if (!runtimeAuth.ok) {
@@ -308,6 +314,7 @@ export class JobManager {
       abortRequested: false,
     };
     const debugLogFollower = this.startDebugLogFollower(record, authLoopState);
+    const progressFollower = this.startProgressEventFollower(record, heartbeat);
 
     let dockerResult: { containerId: string; exitCode: number };
     try {
@@ -338,6 +345,7 @@ export class JobManager {
     } finally {
       heartbeat.stop();
       await debugLogFollower.stop();
+      await progressFollower.stop();
       if (agentStateBefore) {
         const agentStateAfter = await this.agentStateAuditor.captureSnapshot();
         const summary = await this.agentStateAuditor.writeAudit(record.artifacts, agentStateBefore, agentStateAfter);
@@ -490,6 +498,42 @@ export class JobManager {
     await this.observeAuthSignals(record, chunk, state, 'debug log');
   }
 
+  private async observeProgressEvents(
+    record: JobRecord,
+    chunk: string,
+    state: ProgressFollowerState,
+    heartbeat: IdleHeartbeat,
+  ): Promise<void> {
+    const combined = `${state.bufferedLine}${chunk}`;
+    const trailingLineIsPartial = !combined.endsWith('\n') && !combined.endsWith('\r');
+    const lines = combined.split(/\r?\n/);
+    state.bufferedLine = trailingLineIsPartial ? (lines.pop() ?? '') : '';
+
+    for (const line of lines) {
+      if (line.trim().length === 0) {
+        continue;
+      }
+
+      try {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        const message = typeof parsed.message === 'string' ? parsed.message.trim() : '';
+        if (parsed.kind !== 'progress' || message.length === 0) {
+          throw new Error('Invalid progress event');
+        }
+
+        heartbeat.markAgentOutput();
+        const canonicalLine = `[progress] ${message.replace(/\r?\n/g, ' ')}`;
+        await this.appendLogLine(record, canonicalLine);
+        await appendFile(record.artifacts.agentTranscriptPath, `${canonicalLine}\n`, 'utf8');
+      } catch {
+        if (!state.warnedInvalidEvent) {
+          state.warnedInvalidEvent = true;
+          await this.appendRunnerLogLine(record, 'ignoring invalid progress sidecar event');
+        }
+      }
+    }
+  }
+
   private async observeAuthSignals(
     record: JobRecord,
     chunk: string,
@@ -572,6 +616,81 @@ export class JobManager {
         if (!running) {
           stopResolver?.();
         }
+        await stoppedPromise;
+      },
+    };
+  }
+
+  private startProgressEventFollower(record: JobRecord, heartbeat: IdleHeartbeat): DebugLogFollower {
+    let stopped = false;
+    let running = false;
+    let sentLength = 0;
+    let stopResolver: (() => void) | null = null;
+    const state: ProgressFollowerState = {
+      warnedInvalidEvent: false,
+      bufferedLine: '',
+    };
+    const stoppedPromise = new Promise<void>((resolve) => {
+      stopResolver = resolve;
+    });
+
+    const pollOnce = async (): Promise<void> => {
+      const latestRecord = await this.store.get(record.id);
+      if (!latestRecord) {
+        stopped = true;
+        return;
+      }
+
+      let content = '';
+      try {
+        content = await readFile(latestRecord.artifacts.progressEventsPath, 'utf8');
+      } catch {
+        content = '';
+      }
+
+      if (content.length > sentLength) {
+        const chunk = content.slice(sentLength);
+        sentLength = content.length;
+        await this.observeProgressEvents(latestRecord, chunk, state, heartbeat);
+      }
+
+      if (TERMINAL_STATUSES.has(latestRecord.status)) {
+        stopped = true;
+      }
+    };
+
+    const timer = setInterval(() => {
+      if (stopped || running) {
+        return;
+      }
+
+      running = true;
+      void pollOnce()
+        .catch(() => {
+          stopped = true;
+        })
+        .finally(() => {
+          running = false;
+          if (stopped) {
+            clearInterval(timer);
+            stopResolver?.();
+          }
+        });
+    }, this.debugPollIntervalMs);
+
+    return {
+      stop: async () => {
+        clearInterval(timer);
+        if (running) {
+          stopped = true;
+          await stoppedPromise;
+          await pollOnce().catch(() => undefined);
+          return;
+        }
+
+        await pollOnce().catch(() => undefined);
+        stopped = true;
+        stopResolver?.();
         await stoppedPromise;
       },
     };

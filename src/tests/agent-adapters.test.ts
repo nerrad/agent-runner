@@ -34,6 +34,7 @@ async function createJobRecord(agentRuntime: 'claude' | 'codex', overrides: Part
       logPath: path.join(tempDir, 'run.log'),
       debugLogPath: path.join(tempDir, 'outputs', 'debug.log'),
       securityAuditPath: path.join(tempDir, 'security-audit.jsonl'),
+      progressEventsPath: path.join(tempDir, 'outputs', 'progress.ndjson'),
       summaryPath: path.join(tempDir, 'summary.json'),
       gitDiffPath: path.join(tempDir, 'git.diff'),
       agentTranscriptPath: path.join(tempDir, 'agent-transcript.log'),
@@ -73,8 +74,8 @@ test('prepare codex run writes prompt/schema and uses exec mode', async () => {
   assert.match(prompt, /Start with \/spec\/plan\.md/);
   assert.match(prompt, /Read \/spec\/shape\.md/);
   assert.match(prompt, /Progress reporting:/);
-  assert.match(prompt, /prefixed with \[progress\]/);
-  assert.match(prompt, /before long-running commands, tests, or builds/);
+  assert.match(prompt, /ar-emit progress "<message>"/);
+  assert.match(prompt, /Plain stdout lines prefixed with \[progress\]/);
   assert.match(schema, /"completed"/);
   assert.match(schema, /"blockerReason"/);
   assert.match(schema, /"null"/);
