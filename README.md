@@ -14,7 +14,8 @@ This tool is designed for trusted local use only.
 
 ## What it does
 
-- Runs on `127.0.0.1` only
+- Serves the web UI on `127.0.0.1`
+- Exposes a broker endpoint that must remain reachable from worker containers
 - Accepts jobs through either the web UI or the `agent-runner` CLI
 - Fresh-clones a repo into `~/.agent-runner/workspaces/<job-id>/repo`
 - Starts an ephemeral Linux worker container for each job
@@ -22,6 +23,8 @@ This tool is designed for trusted local use only.
 - Stages shared job inputs under `~/.agent-runner/artifacts/<job-id>/inputs` and worker-written outputs under `~/.agent-runner/artifacts/<job-id>/outputs`
 - Captures logs, summaries, diffs, the staged spec bundle, and the agent transcript under `~/.agent-runner/artifacts/<job-id>`
 - Audits mounted agent-state changes at job end and writes `agent-state-summary.json` plus `agent-state.diff`
+- Writes a host-authored `security-audit.jsonl` artifact when broker or profile enforcement blocks an action
+- Starts the broker alongside the long-running server, and brokered CLI jobs will temporarily self-host the broker if one is not already running
 
 ## Profiles
 
@@ -35,8 +38,8 @@ Mounted agent state is a separate control:
 - Default: `--agent-state mounted`
 - Hardened option: `--agent-state none`
 - Mounted agent state includes `~/.claude`, `~/.claude.json`, and `~/.codex`
-- Those mounts preserve local config, instructions, auth, usage, and cost/statistics behavior, but the worker may also modify them
-- Changes under those mounts are audited after each run
+- Those mounts preserve local config, instructions, auth, usage, and cost/statistics behavior, but the worker may also read and modify them
+- Changes under those mounts are audited after each run, but that audit is forensic rather than preventive
 
 ## Baseline toolchain in the worker
 
@@ -145,7 +148,10 @@ Repo and Docker access:
 - `repo-broker` does not mount raw SSH agent or raw `gh` config into the worker
 - `docker-broker` does not mount the raw host Docker socket into the worker
 - Brokered jobs get a per-job lease token and must use the provided `ar-*` wrapper commands for host-mediated repo and Docker actions
+- Brokered reads may inspect other repos through `git` or `gh`
+- Brokered writes are limited to `origin` and cannot target the repo's default branch
 - `dangerous` is the profile that preserves raw ambient repo credentials and raw host Docker passthrough
+- The long-running web/dev server owns the broker lifecycle in normal operation; direct brokered CLI runs fall back to a per-job broker that is started before the worker launches and closed when the runner exits
 
 Environment resolution order:
 
@@ -253,6 +259,9 @@ Normalization rules:
 - `--effort` defaults to `auto`; Claude uses its native `--effort` flag and Codex uses a config override in `exec` mode
 - `--agent-state mounted` is the default because it preserves local config/auth/statistics behavior
 - `--agent-state none` disables the `~/.claude`, `~/.claude.json`, and `~/.codex` mounts
+- `repo-broker` and `docker-broker` require `--repo-access broker`
+- `safe` requires `--repo-access none`
+- `dangerous` does not allow `--repo-access none`
 - `dangerous` is the compatibility profile that preserves raw host Docker and ambient repo credential passthrough
 
 ## Web UI
@@ -278,6 +287,7 @@ Job detail shows:
 - detected staged spec files
 - branch, SHA, workspace, profile, repo access mode, agent state mode, debug attach command, and separate run/debug logs with runner lifecycle markers plus best-effort agent progress lines
 - agent-state audit artifacts when mounted agent state changed
+- a security audit artifact when brokered or profile-gated actions are blocked
 
 Logging notes:
 
@@ -287,6 +297,7 @@ Logging notes:
 - If Claude or Codex emits an auth failure in the observed logs, agent-runner stops the container and fails the job immediately instead of waiting on a hung session
 - The cloned workspace remains on the host after the container exits, including uncommitted changes
 - Worker-generated files written under `/outputs` remain on the host after the container exits
+- Blocked broker and policy actions are recorded in `security-audit.jsonl` and exposed in the web UI
 
 ## Skills
 

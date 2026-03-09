@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import process from 'node:process';
+import { runWithBrokerService } from './broker-service.js';
 import { loadRuntimeConfig } from './config.js';
 import { parseCliArgs, normalizeRunSpec, formatJobSummary, helpText, defaultSkillTargets, resolveSkillTargetRoot } from './cli-utils.js';
 import { runInit } from './init.js';
@@ -71,7 +72,9 @@ async function main(): Promise<void> {
       return;
     }
     case 'internal-run': {
-      await runtime.manager.runJob(command.jobId);
+      await runWithBrokerService(runtime, command.jobId, async () => {
+        await runtime.manager.runJob(command.jobId);
+      });
       return;
     }
     default:

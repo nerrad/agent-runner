@@ -1,9 +1,14 @@
 import express from 'express';
+import path from 'node:path';
 import type { RuntimeContext } from './runtime.js';
 
 export function createBrokerApp(runtime: RuntimeContext): express.Express {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
+
+  app.get('/broker/healthz', (_request, response) => {
+    response.json({ ok: true });
+  });
 
   app.post('/broker/jobs/:jobId/repo/git-read', async (request, response, next) => {
     try {
@@ -11,6 +16,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
       const result = await runtime.repoBroker.runGitRead(record, asStringArray(request.body.args, 'args'));
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
+      await appendSecurityAudit(runtime, request.params.jobId, 'repo-broker', 'git-read', request.body, error);
       next(error);
     }
   });
@@ -21,6 +27,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
       const result = await runtime.repoBroker.runGhRead(record, asStringArray(request.body.args, 'args'));
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
+      await appendSecurityAudit(runtime, request.params.jobId, 'repo-broker', 'gh-read', request.body, error);
       next(error);
     }
   });
@@ -31,6 +38,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
       const result = await runtime.repoBroker.fetch(record, typeof request.body.remote === 'string' ? request.body.remote : undefined);
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
+      await appendSecurityAudit(runtime, request.params.jobId, 'repo-broker', 'fetch', request.body, error);
       next(error);
     }
   });
@@ -41,6 +49,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
       const result = await runtime.repoBroker.createBranch(record, asString(request.body.branchName, 'branchName'));
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
+      await appendSecurityAudit(runtime, request.params.jobId, 'repo-broker', 'create-branch', request.body, error);
       next(error);
     }
   });
@@ -54,6 +63,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
       });
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
+      await appendSecurityAudit(runtime, request.params.jobId, 'repo-broker', 'push', request.body, error);
       next(error);
     }
   });
@@ -65,9 +75,11 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
         title: asString(request.body.title, 'title'),
         body: typeof request.body.body === 'string' ? request.body.body : undefined,
         base: typeof request.body.base === 'string' ? request.body.base : undefined,
+        head: typeof request.body.head === 'string' ? request.body.head : undefined,
       });
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
+      await appendSecurityAudit(runtime, request.params.jobId, 'repo-broker', 'open-pr', request.body, error);
       next(error);
     }
   });
@@ -81,6 +93,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
       });
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
+      await appendSecurityAudit(runtime, request.params.jobId, 'repo-broker', 'comment-pr', request.body, error);
       next(error);
     }
   });
@@ -92,6 +105,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
       const result = await runtime.dockerBroker.compose(record, subcommand, asStringArray(request.body.args, 'args'));
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
+      await appendSecurityAudit(runtime, request.params.jobId, 'docker-broker', `compose:${request.params.subcommand}`, request.body, error);
       next(error);
     }
   });
@@ -106,6 +120,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
       );
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
+      await appendSecurityAudit(runtime, request.params.jobId, 'docker-broker', 'compose-exec', request.body, error);
       next(error);
     }
   });
@@ -116,6 +131,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
       const result = await runtime.dockerBroker.imageBuild(record, asStringArray(request.body.args, 'args'));
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
+      await appendSecurityAudit(runtime, request.params.jobId, 'docker-broker', 'build', request.body, error);
       next(error);
     }
   });
@@ -126,6 +142,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
       const result = await runtime.dockerBroker.containerRun(record, asStringArray(request.body.args, 'args'));
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
+      await appendSecurityAudit(runtime, request.params.jobId, 'docker-broker', 'run', request.body, error);
       next(error);
     }
   });
@@ -136,6 +153,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
       const result = await runtime.dockerBroker.containerStop(record, asString(request.body.containerId, 'containerId'));
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
+      await appendSecurityAudit(runtime, request.params.jobId, 'docker-broker', 'stop', request.body, error);
       next(error);
     }
   });
@@ -147,6 +165,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
       const result = await runtime.dockerBroker.wpEnv(record, subcommand, asStringArray(request.body.args, 'args'));
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
+      await appendSecurityAudit(runtime, request.params.jobId, 'docker-broker', `wp-env:${request.params.subcommand}`, request.body, error);
       next(error);
     }
   });
@@ -166,6 +185,9 @@ async function authorizeBrokerJob(runtime: RuntimeContext, jobId: string, token:
   const record = await runtime.manager.getJob(jobId);
   if (!record) {
     throw new Error('Job not found');
+  }
+  if ([ 'blocked', 'completed', 'failed', 'canceled' ].includes(record.status)) {
+    throw new Error(`Broker access is not available after job ${record.status}`);
   }
   if (record.spec.capabilityProfile !== 'repo-broker' && record.spec.capabilityProfile !== 'docker-broker') {
     throw new Error('Broker access is not enabled for this job');
@@ -207,4 +229,40 @@ function asWpEnvCommand(value: string): 'start' | 'stop' | 'run' | 'logs' {
     return value;
   }
   throw new Error(`Unsupported wp-env command: ${value}`);
+}
+
+async function appendSecurityAudit(
+  runtime: RuntimeContext,
+  jobId: string,
+  subsystem: string,
+  action: string,
+  args: unknown,
+  error: unknown,
+): Promise<void> {
+  await runtime.securityAuditLogger.append(
+    path.join(runtime.config.artifactsDir, jobId, 'security-audit.jsonl'),
+    {
+      jobId,
+      subsystem,
+      action,
+      args: normalizeAuditArgs(args),
+      reason: error instanceof Error ? error.message : String(error),
+    },
+  ).catch(() => undefined);
+}
+
+function normalizeAuditArgs(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([ key, current ]) => {
+    if (typeof current === 'string' || typeof current === 'number' || typeof current === 'boolean' || current === null) {
+      return [ key, current ];
+    }
+    if (Array.isArray(current)) {
+      return [ key, current.map((item) => typeof item === 'string' ? item : String(item)).slice(0, 20) ];
+    }
+    return [ key, '[complex]' ];
+  }));
 }
