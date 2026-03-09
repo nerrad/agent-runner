@@ -10,6 +10,7 @@ export interface RuntimeConfig {
   jobsDir: string;
   workspacesDir: string;
   artifactsDir: string;
+  specRoot: string;
   ghConfigDir: string;
   claudeDir: string;
   claudeSettingsPath: string;
@@ -21,6 +22,9 @@ export interface RuntimeConfig {
   githubProxyUrl?: string;
   workerImageTag: string;
   sourceRoot: string;
+  brokerPort: number;
+  brokerHost: string;
+  brokerUrl: string;
 }
 
 export async function resolveDockerSocketPath(): Promise<string> {
@@ -49,6 +53,7 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
     jobsDir: path.join(appDir, 'jobs'),
     workspacesDir: path.join(appDir, 'workspaces'),
     artifactsDir: path.join(appDir, 'artifacts'),
+    specRoot: process.env.AGENT_RUNNER_SPEC_ROOT ?? path.join(appDir, 'specs'),
     ghConfigDir: process.env.AGENT_RUNNER_GH_CONFIG ?? path.join(os.homedir(), '.config', 'gh'),
     claudeDir: process.env.AGENT_RUNNER_CLAUDE_DIR ?? path.join(os.homedir(), '.claude'),
     claudeSettingsPath: process.env.AGENT_RUNNER_CLAUDE_SETTINGS ?? path.join(os.homedir(), '.claude.json'),
@@ -60,12 +65,17 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
     githubProxyUrl: process.env.AGENT_RUNNER_GITHUB_PROXY_URL,
     workerImageTag: process.env.AGENT_RUNNER_IMAGE ?? 'agent-runner-worker:latest',
     sourceRoot,
+    brokerPort: Number.parseInt(process.env.AGENT_RUNNER_BROKER_PORT ?? '4318', 10),
+    brokerHost: process.env.AGENT_RUNNER_BROKER_HOST ?? 'host.docker.internal',
+    brokerUrl: '',
   };
+  config.brokerUrl = `http://${config.brokerHost}:${config.brokerPort}`;
 
   await ensureDir(config.appDir);
   await ensureDir(config.jobsDir);
   await ensureDir(config.workspacesDir);
   await ensureDir(config.artifactsDir);
+  await ensureDir(config.specRoot);
 
   return config;
 }

@@ -13,6 +13,8 @@ export interface JobPaths {
 export function buildJobPaths(config: RuntimeConfig, jobId: string): JobPaths {
   const jobDir = path.join(config.jobsDir, jobId);
   const artifactDir = path.join(config.artifactsDir, jobId);
+  const inputsDir = path.join(artifactDir, 'inputs');
+  const outputsDir = path.join(artifactDir, 'outputs');
   return {
     jobDir,
     workspacePath: path.join(config.workspacesDir, jobId, 'repo'),
@@ -20,14 +22,19 @@ export function buildJobPaths(config: RuntimeConfig, jobId: string): JobPaths {
     recordPath: path.join(jobDir, 'job.json'),
     artifacts: {
       logPath: path.join(artifactDir, 'run.log'),
-      debugLogPath: path.join(artifactDir, 'debug.log'),
+      debugLogPath: path.join(outputsDir, 'debug.log'),
+      securityAuditPath: path.join(artifactDir, 'security-audit.jsonl'),
       summaryPath: path.join(artifactDir, 'summary.json'),
       gitDiffPath: path.join(artifactDir, 'git.diff'),
       agentTranscriptPath: path.join(artifactDir, 'agent-transcript.log'),
-      finalResponsePath: path.join(artifactDir, 'final-response.json'),
-      schemaPath: path.join(artifactDir, 'result-schema.json'),
-      promptPath: path.join(artifactDir, 'prompt.txt'),
+      finalResponsePath: path.join(outputsDir, 'final-response.json'),
+      schemaPath: path.join(inputsDir, 'result-schema.json'),
+      promptPath: path.join(inputsDir, 'prompt.txt'),
       specBundlePath: path.join(artifactDir, 'spec'),
+      inputsDir,
+      outputsDir,
+      agentStateSummaryPath: path.join(artifactDir, 'agent-state-summary.json'),
+      agentStateDiffPath: path.join(artifactDir, 'agent-state.diff'),
     },
   };
 }

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ARGS="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@")"
+ar-broker-request "/broker/jobs/${AGENT_RUNNER_JOB_ID}/repo/gh-read" "{\"args\": ${ARGS}}"

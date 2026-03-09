@@ -42,13 +42,18 @@ export async function launchDetachedJobRunner(config: RuntimeConfig, jobId: stri
   const launcherLogPath = path.join(config.artifactsDir, jobId, 'launcher.log');
   mkdirSync(path.dirname(launcherLogPath), { recursive: true });
   const launcherLogFd = openSync(launcherLogPath, 'a');
-  const child = spawn(launch.command, launch.args, {
-    cwd: launch.cwd,
-    detached: true,
-    stdio: [ 'ignore', launcherLogFd, launcherLogFd ],
-    env: process.env,
-  });
-  closeSync(launcherLogFd);
+  try {
+    const child = spawn(launch.command, launch.args, {
+      cwd: launch.cwd,
+      detached: true,
+      stdio: [ 'ignore', launcherLogFd, launcherLogFd ],
+      env: process.env,
+    });
+    closeSync(launcherLogFd);
 
-  child.unref();
+    child.unref();
+  } catch (error) {
+    closeSync(launcherLogFd);
+    throw error;
+  }
 }

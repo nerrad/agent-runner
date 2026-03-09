@@ -7,10 +7,14 @@ import type { AgentResult, JobRecord } from '../shared/types.js';
 import type { RuntimeConfig } from '../server/config.js';
 import type { DockerRunRequest } from '../server/docker-runner.js';
 import { pathExists } from '../server/fs-utils.js';
+import { AgentStateAuditor } from '../server/agent-state-audit.js';
+import { BrokerLeaseStore } from '../server/broker-lease.js';
+import { DockerBroker } from '../server/docker-broker.js';
 import { JobStore } from '../server/job-store.js';
 import { JobEvents } from '../server/job-events.js';
 import type { JobManagerOptions } from '../server/job-manager.js';
 import { JobManager } from '../server/job-manager.js';
+import { SecurityAuditLogger } from '../server/security-audit-log.js';
 import { AgentAdapters } from '../server/agent-adapters.js';
 
 const AUTH_ENV_KEYS = [
@@ -21,6 +25,7 @@ const AUTH_ENV_KEYS = [
 class MockGitManager {
   public changedFiles = [ ' M src/index.ts' ];
   public headSha = 'abc123';
+  public defaultBranch = 'main';
 
   async cloneRepository(_repoUrl: string, workspacePath: string): Promise<void> {
     await mkdir(workspacePath, { recursive: true });
@@ -31,6 +36,7 @@ class MockGitManager {
   }
 
   async createBranch(): Promise<void> {}
+  async getDefaultBranch(): Promise<string> { return this.defaultBranch; }
   async getHeadSha(): Promise<string> { return this.headSha; }
   async getChangedFiles(): Promise<string[]> { return this.changedFiles; }
   async commitAll(): Promise<boolean> { return true; }
@@ -207,6 +213,7 @@ function createRuntimeConfig(root: string): RuntimeConfig {
     jobsDir: path.join(root, 'jobs'),
     workspacesDir: path.join(root, 'workspaces'),
     artifactsDir: path.join(root, 'artifacts'),
+    specRoot: path.join(root, 'specs'),
     ghConfigDir: path.join(root, 'gh'),
     claudeDir: path.join(root, 'claude'),
     claudeSettingsPath: path.join(root, '.claude.json'),
@@ -218,6 +225,9 @@ function createRuntimeConfig(root: string): RuntimeConfig {
     githubProxyUrl: 'socks5://host.docker.internal:8080',
     workerImageTag: 'agent-runner-worker:latest',
     sourceRoot: path.resolve(new URL('../..', import.meta.url).pathname),
+    brokerPort: 4318,
+    brokerHost: 'host.docker.internal',
+    brokerUrl: 'http://host.docker.internal:4318',
   };
 }
 
@@ -240,6 +250,10 @@ function createManager(
     new MockGitManager() as never,
     docker as never,
     new AgentAdapters(),
+    new AgentStateAuditor(config),
+    new BrokerLeaseStore(config),
+    new DockerBroker(config),
+    new SecurityAuditLogger(),
     {
       runMode: 'inline',
       ...options,
@@ -284,6 +298,9 @@ async function createJob(manager: JobManager, agentRuntime: 'claude' | 'codex'):
     githubHost: 'github.com',
     commitOnStop: true,
     wpEnvEnabled: true,
+    capabilityProfile: 'dangerous',
+    repoAccessMode: 'ambient',
+    agentStateMode: 'mounted',
   });
 }
 
@@ -306,6 +323,7 @@ test('job manager processes a claude job through completion with direct env auth
   assert.equal(docker.lastEnv?.ANTHROPIC_API_KEY, 'test-anthropic-key');
   assert.match(finished.debugCommand ?? '', /docker exec -it container-123 bash/);
   assert.equal(finished.headSha, 'abc123');
+  assert.equal(finished.agentStateModified, false);
   assert.equal(finished.resolvedSpec?.specMode, 'bundle');
   assert.deepEqual(finished.resolvedSpec?.specFiles, [ '/spec/plan.md', '/spec/shape.md' ]);
   assert.match(log, /\[agent-runner\] cloning repository/);

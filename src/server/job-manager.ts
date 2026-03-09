@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, open, readFile, unlink, writeFile } from 'node:fs/promises';
+import { appendFile, open, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentResult, JobRecord, JobSpec, JobStatus } from '../shared/types.js';
 import { AgentResultSchema, JobSpecSchema } from '../shared/types.js';
+import type { AgentStateAuditor } from './agent-state-audit.js';
+import type { BrokerLeaseStore } from './broker-lease.js';
 import type { RuntimeConfig } from './config.js';
 import { createGitHostProfile } from './config.js';
+import type { DockerBroker } from './docker-broker.js';
 import type { DockerRunner } from './docker-runner.js';
 import { ensureDir, safeRemove, writeJsonAtomic } from './fs-utils.js';
 import type { GitManager } from './git-manager.js';
@@ -13,6 +16,7 @@ import { launchDetachedJobRunner } from './job-launcher.js';
 import { buildJobPaths } from './paths.js';
 import { AgentAdapters } from './agent-adapters.js';
 import { runCommand } from './process-utils.js';
+import type { SecurityAuditLogger } from './security-audit-log.js';
 import { stageSpecBundle } from './spec-resolver.js';
 import { JobStore } from './job-store.js';
 
@@ -35,6 +39,10 @@ interface JobLockPayload {
 interface ResolvedRuntimeAuth {
   env: Record<string, string>;
   source: 'env';
+}
+
+interface AgentStateAuditResult {
+  changed: boolean;
 }
 
 interface AuthLoopState {
@@ -72,6 +80,10 @@ export class JobManager {
     private readonly git: GitManager,
     private readonly docker: DockerRunner,
     private readonly adapters: AgentAdapters,
+    private readonly agentStateAuditor: AgentStateAuditor,
+    private readonly brokerLeaseStore: BrokerLeaseStore,
+    private readonly dockerBroker: DockerBroker,
+    private readonly securityAuditLogger: SecurityAuditLogger,
     options: JobManagerOptions = {},
   ) {
     this.activeLockPath = path.join(this.config.appDir, 'active-job.lock');
@@ -82,7 +94,8 @@ export class JobManager {
   }
 
   async createJob(input: JobSpec): Promise<JobRecord> {
-    const spec = JobSpecSchema.parse(input);
+    const parsed = JobSpecSchema.parse(input);
+    const spec = this.normalizeJobSpec(parsed);
     const id = randomUUID();
     const now = new Date().toISOString();
     const paths = buildJobPaths(this.config, id);
@@ -91,6 +104,10 @@ export class JobManager {
     await ensureDir(paths.jobDir);
     await ensureDir(path.dirname(paths.workspacePath));
     await ensureDir(paths.artifactDir);
+    await ensureDir(paths.artifacts.inputsDir);
+    await ensureDir(paths.artifacts.outputsDir);
+
+    this.validateAbsoluteSpecPath(spec.specPath);
 
     const record: JobRecord = {
       id,
@@ -98,6 +115,7 @@ export class JobManager {
       status: 'queued',
       workspacePath: paths.workspacePath,
       branchName,
+      defaultBranch: undefined,
       createdAt: now,
       updatedAt: now,
       artifacts: paths.artifacts,
@@ -148,6 +166,9 @@ export class JobManager {
       await this.docker.stopJob(record.containerId);
     }
 
+    await this.cleanupBrokeredDockerResources(record);
+    await this.revokeBrokerLease(jobId);
+
     if (TERMINAL_STATUSES.has(record.status)) {
       return record;
     }
@@ -183,6 +204,8 @@ export class JobManager {
     try {
       const record = await this.requireJob(jobId);
       if (TERMINAL_STATUSES.has(record.status)) {
+        await this.cleanupBrokeredDockerResources(record);
+        await this.revokeBrokerLease(jobId);
         return;
       }
 
@@ -194,6 +217,11 @@ export class JobManager {
           status: 'failed',
           endedAt: new Date().toISOString(),
           blockerReason: error instanceof Error ? error.message : String(error),
+        });
+        await this.revokeBrokerLease(jobId);
+        await this.cleanupBrokeredDockerResources({
+          ...record,
+          status: 'failed',
         });
       }
     } finally {
@@ -210,6 +238,10 @@ export class JobManager {
     const profile = createGitHostProfile(this.config, record.spec.githubHost);
     const runtimeAuth = await this.resolveRuntimeAuth(record.spec.agentRuntime);
     const runtimeEnv: Record<string, string> = runtimeAuth.ok ? { ...runtimeAuth.value.env } : {};
+    let agentStateBefore = record.spec.agentStateMode === 'mounted'
+      ? await this.agentStateAuditor.captureSnapshot()
+      : null;
+    let agentStateAudit: AgentStateAuditResult | null = null;
 
     if (profile.proxyUrl) {
       runtimeEnv.HTTPS_PROXY = profile.proxyUrl;
@@ -217,6 +249,7 @@ export class JobManager {
 
     await writeFile(record.artifacts.logPath, '', 'utf8');
     await writeFile(record.artifacts.debugLogPath, '', 'utf8');
+    await writeFile(record.artifacts.securityAuditPath, '', 'utf8');
     await writeFile(record.artifacts.agentTranscriptPath, '', 'utf8');
 
     if (!runtimeAuth.ok) {
@@ -238,8 +271,10 @@ export class JobManager {
     await safeRemove(record.workspacePath);
     await ensureDir(path.dirname(record.workspacePath));
     await this.git.cloneRepository(record.spec.repoUrl, record.workspacePath, record.spec.ref);
+    const defaultBranch = await this.git.getDefaultBranch(record.workspacePath);
     await this.git.createBranch(record.workspacePath, record.branchName);
     record = await this.updateRecord(record, {
+      defaultBranch,
       headSha: await this.git.getHeadSha(record.workspacePath),
     });
 
@@ -248,12 +283,19 @@ export class JobManager {
     });
     await this.appendRunnerLogLine(logTarget, 'bootstrapping workspace and staging spec bundle');
 
-    const stagedSpec = await stageSpecBundle(record.workspacePath, record.spec.specPath, record.artifacts.specBundlePath);
+    const stagedSpec = await stageSpecBundle(record.workspacePath, record.spec.specPath, record.artifacts.specBundlePath, this.config.specRoot);
     record = await this.updateRecord(record, {
       resolvedSpec: stagedSpec.resolvedSpec,
+      specSourceType: stagedSpec.specSourceType,
     });
 
     const prepared = await this.adapters.prepare(record);
+    const brokerLease = await this.maybeIssueBrokerLease(record);
+    if (brokerLease) {
+      runtimeEnv.AGENT_RUNNER_BROKER_TOKEN = brokerLease.token;
+      runtimeEnv.AGENT_RUNNER_BROKER_URL = this.config.brokerUrl;
+      runtimeEnv.AGENT_RUNNER_JOB_ID = record.id;
+    }
     await this.appendRunnerLogLine(logTarget, 'building worker image and launching agent');
     await this.docker.ensureImageBuilt();
 
@@ -296,10 +338,21 @@ export class JobManager {
     } finally {
       heartbeat.stop();
       await debugLogFollower.stop();
+      if (agentStateBefore) {
+        const agentStateAfter = await this.agentStateAuditor.captureSnapshot();
+        const summary = await this.agentStateAuditor.writeAudit(record.artifacts, agentStateBefore, agentStateAfter);
+        agentStateAudit = { changed: summary.changed };
+        record = await this.updateRecord(record, {
+          agentStateModified: summary.changed,
+        });
+        agentStateBefore = null;
+      }
     }
 
     const latestRecord = await this.requireJob(record.id);
     if (latestRecord.status === 'canceled') {
+      await this.cleanupBrokeredDockerResources(latestRecord);
+      await this.revokeBrokerLease(latestRecord.id);
       await this.updateRecord(latestRecord, {
         endedAt: latestRecord.endedAt ?? new Date().toISOString(),
       });
@@ -307,6 +360,8 @@ export class JobManager {
     }
 
     if (authLoopState.blockerReason) {
+      await this.cleanupBrokeredDockerResources(latestRecord);
+      await this.revokeBrokerLease(latestRecord.id);
       await this.updateRecord(latestRecord, {
         status: 'failed',
         endedAt: new Date().toISOString(),
@@ -335,9 +390,11 @@ export class JobManager {
     record = await this.updateRecord(record, {
       headSha,
     });
-    await this.writeArtifacts(record, changedFiles, agentResult, stagedSpec.sourcePath, committed);
+    await this.writeArtifacts(record, changedFiles, agentResult, stagedSpec.sourcePath, stagedSpec.specSourceType, committed, agentStateAudit);
 
     if (dockerResult.exitCode !== 0 && !agentResult) {
+      await this.cleanupBrokeredDockerResources(record);
+      await this.revokeBrokerLease(record.id);
       await this.updateRecord(record, {
         status: 'failed',
         endedAt: new Date().toISOString(),
@@ -346,11 +403,13 @@ export class JobManager {
       return;
     }
 
-    await this.updateRecord(record, {
+    const completedRecord = await this.updateRecord(record, {
       status: agentResult?.status ?? 'failed',
       blockerReason: agentResult?.blockerReason,
       endedAt: new Date().toISOString(),
     });
+    await this.cleanupBrokeredDockerResources(completedRecord);
+    await this.revokeBrokerLease(completedRecord.id);
   }
 
   private async writeArtifacts(
@@ -358,7 +417,9 @@ export class JobManager {
     changedFiles: string[],
     agentResult: AgentResult | null,
     sourceSpecPath: string,
+    specSourceType: 'repo-relative' | 'external-spec-root',
     committed: boolean,
+    agentStateAudit: AgentStateAuditResult | null,
   ): Promise<void> {
     let finalResponseContent = '';
     try {
@@ -397,7 +458,9 @@ export class JobManager {
       workspacePath: record.workspacePath,
       specPath: record.spec.specPath,
       sourceSpecPath,
+      specSourceType,
       resolvedSpec: record.resolvedSpec,
+      agentStateModified: agentStateAudit?.changed ?? false,
     });
   }
 
@@ -579,8 +642,17 @@ export class JobManager {
       return false;
     }
 
-    await safeRemove(this.activeLockPath);
-    return true;
+    const stalePath = `${this.activeLockPath}.stale-${process.pid}-${Date.now()}`;
+    try {
+      await rename(this.activeLockPath, stalePath);
+      await safeRemove(stalePath);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return true;
+      }
+      return false;
+    }
   }
 
   private isProcessAlive(pid: number): boolean {
@@ -642,6 +714,64 @@ export class JobManager {
 
   private async appendRunnerLogLine(target: LogTarget, message: string): Promise<void> {
     await this.appendLogLine(target, `${RUNNER_LOG_PREFIX} ${message}`);
+  }
+
+  private normalizeJobSpec(spec: JobSpec): JobSpec {
+    const capabilityProfile = spec.capabilityProfile ?? 'safe';
+    const repoAccessMode = spec.repoAccessMode ?? 'none';
+
+    if (capabilityProfile === 'dangerous' && repoAccessMode === 'none') {
+      throw new Error('dangerous jobs cannot use repoAccessMode=none; choose ambient or a safer profile');
+    }
+
+    if (capabilityProfile === 'safe' && repoAccessMode !== 'none') {
+      throw new Error('safe jobs must use repoAccessMode=none');
+    }
+
+    if ((capabilityProfile === 'repo-broker' || capabilityProfile === 'docker-broker') && repoAccessMode !== 'broker') {
+      throw new Error(`${capabilityProfile} jobs must use repoAccessMode=broker`);
+    }
+
+    return {
+      ...spec,
+      capabilityProfile,
+      repoAccessMode,
+      agentStateMode: spec.agentStateMode ?? 'mounted',
+    };
+  }
+
+  private validateAbsoluteSpecPath(specPath: string): void {
+    if (!path.isAbsolute(specPath)) {
+      return;
+    }
+
+    const relative = path.relative(this.config.specRoot, specPath);
+    if (relative !== '' && (relative.startsWith('..') || path.isAbsolute(relative))) {
+      throw new Error(`Absolute spec paths must stay inside ${this.config.specRoot}`);
+    }
+  }
+
+  private async maybeIssueBrokerLease(record: JobRecord) {
+    if (record.spec.capabilityProfile === 'repo-broker' || record.spec.capabilityProfile === 'docker-broker') {
+      return await this.brokerLeaseStore.issue(record);
+    }
+    return null;
+  }
+
+  private async revokeBrokerLease(jobId: string): Promise<void> {
+    await this.brokerLeaseStore.revoke(jobId);
+  }
+
+  private async cleanupBrokeredDockerResources(record: JobRecord): Promise<void> {
+    if (record.spec.capabilityProfile !== 'docker-broker') {
+      return;
+    }
+
+    try {
+      await this.dockerBroker.cleanupJob(record);
+    } catch (error) {
+      await this.appendRunnerLogLine(record, `docker cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private startIdleHeartbeat(target: LogTarget): IdleHeartbeat {

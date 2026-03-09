@@ -32,7 +32,7 @@ export class DockerRunner {
   }
 
   async runJob(request: DockerRunRequest): Promise<{ containerId: string; exitCode: number }> {
-    const dockerArgs = this.buildRunArgs(request);
+    const dockerArgs = await this.buildRunArgs(request);
     const runResult = await runCommand('docker', dockerArgs);
     if (runResult.exitCode !== 0) {
       throw new Error(runResult.stderr || 'Failed to start worker container');
@@ -56,11 +56,13 @@ export class DockerRunner {
     return { containerId, exitCode: Number.isNaN(exitCode) ? 1 : exitCode };
   }
 
-  buildRunArgs(request: DockerRunRequest): string[] {
+  async buildRunArgs(request: DockerRunRequest): Promise<string[]> {
     const containerName = `agent-runner-${request.job.id}`;
     const sshMountTarget = '/tmp/agent-runner-ssh.sock';
     const ghMountTarget = '/gh-config';
     const containerHome = '/home/agent-runner';
+    const { capabilityProfile, agentStateMode } = request.job.spec;
+    const env = await this.resolveContainerEnv(request);
 
     const dockerArgs = [
       'run',
@@ -75,42 +77,78 @@ export class DockerRunner {
       '--mount',
       `type=bind,src=${request.job.workspacePath},dst=/workspace`,
       '--mount',
-      `type=bind,src=${path.dirname(request.job.artifacts.logPath)},dst=/artifacts`,
-      '--mount',
       `type=bind,src=${request.job.artifacts.specBundlePath},dst=/spec,readonly`,
       '--mount',
-      `type=bind,src=${this.config.dockerSocketPath},dst=/var/run/docker.sock`,
+      `type=bind,src=${request.job.artifacts.inputsDir},dst=/inputs,readonly`,
       '--mount',
-      `type=bind,src=${this.config.ghConfigDir},dst=${ghMountTarget},readonly`,
-      '--mount',
-      `type=bind,src=${this.config.claudeDir},dst=${containerHome}/.claude`,
-      '--mount',
-      `type=bind,src=${this.config.claudeSettingsPath},dst=${containerHome}/.claude.json`,
-      '--mount',
-      `type=bind,src=${this.config.codexDir},dst=${containerHome}/.codex`,
-      '--env',
-      `DOCKER_HOST=unix:///var/run/docker.sock`,
-      '--env',
-      `GH_CONFIG_DIR=${ghMountTarget}`,
+      `type=bind,src=${request.job.artifacts.outputsDir},dst=/outputs`,
       '--env',
       `HOME=${containerHome}`,
       '--env',
       'USER=agent-runner',
       '--env',
       'LOGNAME=agent-runner',
+      '--env',
+      `AGENT_RUNNER_PROFILE=${capabilityProfile}`,
     ];
 
-    if (this.config.sshAuthSock) {
+    if (capabilityProfile !== 'dangerous') {
+      dockerArgs.push('--cap-drop=ALL');
+      dockerArgs.push('--security-opt=no-new-privileges');
+    }
+
+    if (capabilityProfile === 'dangerous') {
+      dockerArgs.push('--mount', `type=bind,src=${path.dirname(request.job.artifacts.logPath)},dst=/artifacts`);
+      dockerArgs.push('--mount', `type=bind,src=${this.config.dockerSocketPath},dst=/var/run/docker.sock`);
+      dockerArgs.push('--env', `DOCKER_HOST=unix:///var/run/docker.sock`);
+      dockerArgs.push('--mount', `type=bind,src=${this.config.ghConfigDir},dst=${ghMountTarget},readonly`);
+      dockerArgs.push('--env', `GH_CONFIG_DIR=${ghMountTarget}`);
+    }
+
+    if (agentStateMode === 'mounted') {
+      dockerArgs.push('--mount', `type=bind,src=${this.config.claudeDir},dst=${containerHome}/.claude`);
+      dockerArgs.push('--mount', `type=bind,src=${this.config.claudeSettingsPath},dst=${containerHome}/.claude.json`);
+      dockerArgs.push('--mount', `type=bind,src=${this.config.codexDir},dst=${containerHome}/.codex`);
+    }
+
+    if (capabilityProfile === 'dangerous' && this.config.sshAuthSock) {
       dockerArgs.push('--mount', `type=bind,src=${this.config.sshAuthSock},dst=${sshMountTarget}`);
       dockerArgs.push('--env', `SSH_AUTH_SOCK=${sshMountTarget}`);
     }
 
-    for (const [ key, value ] of Object.entries(request.env)) {
+    for (const [ key, value ] of Object.entries(env)) {
       dockerArgs.push('--env', `${key}=${value}`);
     }
 
     dockerArgs.push(this.config.workerImageTag, ...request.command);
     return dockerArgs;
+  }
+
+  private async resolveContainerEnv(request: DockerRunRequest): Promise<Record<string, string>> {
+    const env = { ...request.env };
+    const { capabilityProfile } = request.job.spec;
+
+    if (capabilityProfile === 'repo-broker' || capabilityProfile === 'docker-broker') {
+      env.AGENT_RUNNER_JOB_ID ??= request.job.id;
+      env.AGENT_RUNNER_BROKER_URL ??= this.config.brokerUrl;
+
+      if (!env.AGENT_RUNNER_BROKER_TOKEN) {
+        try {
+          const leasePath = path.join(this.config.jobsDir, request.job.id, 'broker-lease.json');
+          const raw = await readFile(leasePath, 'utf8');
+          const lease = JSON.parse(raw) as { token?: string };
+          if (lease.token) {
+            env.AGENT_RUNNER_BROKER_TOKEN = lease.token;
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+            throw error;
+          }
+        }
+      }
+    }
+
+    return env;
   }
 
   async stopJob(containerId: string): Promise<void> {

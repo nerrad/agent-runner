@@ -19,16 +19,22 @@ const INITIAL_FORM: JobSpec = {
   githubHost: 'github.com',
   commitOnStop: true,
   wpEnvEnabled: true,
+  capabilityProfile: 'safe',
+  repoAccessMode: 'none',
+  agentStateMode: 'mounted',
 };
 
 const VIEWER_TABS = [
   { id: 'run', label: 'run.log' },
   { id: 'debug', label: 'debug.log' },
+  { id: 'securityAudit', label: 'security audit' },
   { id: 'summary', label: 'summary' },
   { id: 'finalResponse', label: 'final response' },
   { id: 'gitDiff', label: 'git diff' },
   { id: 'transcript', label: 'transcript' },
   { id: 'prompt', label: 'prompt' },
+  { id: 'agentStateSummary', label: 'agent-state summary' },
+  { id: 'agentStateDiff', label: 'agent-state diff' },
 ] as const;
 
 const TERMINAL_STATUSES = new Set<JobStatus>([ 'blocked', 'completed', 'failed', 'canceled' ]);
@@ -344,14 +350,14 @@ export function App(): ReactElement {
           <p className="eyebrow">Local Autonomous Worker</p>
           <h1>agent-runner</h1>
           <p className="lede">
-            Fresh repo clone, ephemeral worker container, one active job, and a localhost control plane.
+            Fresh repo clone, ephemeral worker container, brokered host access profiles, and a localhost control plane.
           </p>
         </div>
-        <div className="hero-meta">
-          <span>127.0.0.1 only</span>
-          <span>Claude Code + Codex</span>
-          <span>Docker socket passthrough</span>
-        </div>
+          <div className="hero-meta">
+            <span>UI on 127.0.0.1</span>
+            <span>Claude Code + Codex</span>
+            <span>Profile-based host access</span>
+          </div>
       </header>
 
       <main className="layout">
@@ -429,6 +435,49 @@ export function App(): ReactElement {
                 />
               </label>
             </div>
+            <div className="inline-fields">
+              <label>
+                Access profile
+                <select
+                  value={form.capabilityProfile}
+                  onChange={(event) => setForm((current) => ({ ...current, capabilityProfile: event.target.value as JobSpec['capabilityProfile'] }))}
+                >
+                  <option value="safe">safe</option>
+                  <option value="repo-broker">repo-broker</option>
+                  <option value="docker-broker">docker-broker</option>
+                  <option value="dangerous">dangerous</option>
+                </select>
+              </label>
+              <label>
+                Agent state
+                <select
+                  value={form.agentStateMode}
+                  onChange={(event) => setForm((current) => ({ ...current, agentStateMode: event.target.value as JobSpec['agentStateMode'] }))}
+                >
+                  <option value="mounted">mounted</option>
+                  <option value="none">none</option>
+                </select>
+              </label>
+            </div>
+            <div className="inline-fields">
+              <label>
+                Repo access
+                <select
+                  value={form.repoAccessMode}
+                  onChange={(event) => setForm((current) => ({ ...current, repoAccessMode: event.target.value as JobSpec['repoAccessMode'] }))}
+                >
+                  <option value="none">none</option>
+                  <option value="broker">broker</option>
+                  <option value="ambient">ambient</option>
+                </select>
+              </label>
+            </div>
+            {form.capabilityProfile === 'dangerous' ? (
+              <p className="error-line">Dangerous mode exposes ambient repo credentials and raw host Docker access.</p>
+            ) : null}
+            {form.agentStateMode === 'mounted' ? (
+              <p className="error-line">Mounted agent state preserves local config, auth, instructions, telemetry, and cost/accounting state. It is mounted read-write and audited after the run, but the audit is forensic rather than preventive.</p>
+            ) : null}
             {error ? <p className="error-line">{error}</p> : null}
             <button className="primary-button" type="submit" disabled={submitting}>
               {submitting ? 'Creating...' : 'Create Job'}
@@ -457,6 +506,7 @@ export function App(): ReactElement {
                   <strong>{job.spec.repoUrl}</strong>
                   <span>{job.spec.specPath}</span>
                   <span>{job.spec.model ?? 'runtime default'} / {job.spec.effort}</span>
+                  <span>{job.spec.capabilityProfile} / {job.spec.agentStateMode}</span>
                   <span className="job-meta">{job.branchName}</span>
                 </button>
               ))}
@@ -503,12 +553,42 @@ export function App(): ReactElement {
                       <dd>{selectedJob.spec.effort}</dd>
                     </div>
                     <div>
+                      <dt>Profile</dt>
+                      <dd>{selectedJob.spec.capabilityProfile}</dd>
+                    </div>
+                    <div>
+                      <dt>Repo access</dt>
+                      <dd>{selectedJob.spec.repoAccessMode}</dd>
+                    </div>
+                    <div>
+                      <dt>Agent state</dt>
+                      <dd>{selectedJob.spec.agentStateMode}</dd>
+                    </div>
+                    <div>
+                      <dt>Agent-state warning</dt>
+                      <dd>{selectedJob.spec.agentStateMode === 'mounted' ? 'Mounted host agent state is readable and writable by the worker' : 'Mounted host agent state disabled'}</dd>
+                    </div>
+                    <div>
+                      <dt>Agent-state audit</dt>
+                      <dd>{
+                        selectedJob.agentStateModified === true
+                          ? 'Changes detected'
+                          : selectedJob.agentStateModified === false
+                            ? 'No changes detected'
+                            : 'Review summary or agent-state artifacts after completion'
+                      }</dd>
+                    </div>
+                    <div>
                       <dt>Spec path</dt>
                       <dd>{selectedJob.spec.specPath}</dd>
                     </div>
                     <div>
                       <dt>Resolved spec</dt>
                       <dd>{selectedJob.resolvedSpec ? `${selectedJob.resolvedSpec.specMode}: ${selectedJob.resolvedSpec.specFiles.join(', ')}` : 'Pending'}</dd>
+                    </div>
+                    <div>
+                      <dt>Spec source</dt>
+                      <dd>{selectedJob.specSourceType ?? 'Pending'}</dd>
                     </div>
                     <div>
                       <dt>Workspace</dt>
@@ -713,6 +793,9 @@ function renderSummaryArtifact(summary: JobSummaryArtifact): ReactElement {
 
 function artifactText(viewerTab: JobArtifactId, payload: JobArtifactPayload): string {
   if (!payload.available) {
+    if (viewerTab === 'securityAudit') {
+      return 'No blocked activity was recorded for this job.';
+    }
     return `${payload.label} is not available yet.`;
   }
 
@@ -727,10 +810,16 @@ function artifactText(viewerTab: JobArtifactId, payload: JobArtifactPayload): st
       return 'No summary captured for this job.';
     case 'transcript':
       return 'No transcript captured for this job.';
+    case 'securityAudit':
+      return 'No blocked activity was recorded for this job.';
     case 'finalResponse':
       return 'No final response artifact captured for this job.';
     case 'prompt':
       return 'No prompt artifact captured for this job.';
+    case 'agentStateSummary':
+      return 'No agent-state summary captured for this job.';
+    case 'agentStateDiff':
+      return 'No agent-state diff captured for this job.';
   }
 }
 
@@ -746,6 +835,8 @@ function viewerTabLabel(viewerTab: ViewerTabId): string {
       return 'Debug log';
     case 'summary':
       return 'Summary';
+    case 'securityAudit':
+      return 'Security audit log';
     case 'finalResponse':
       return 'Final response';
     case 'gitDiff':
@@ -754,6 +845,10 @@ function viewerTabLabel(viewerTab: ViewerTabId): string {
       return 'Transcript';
     case 'prompt':
       return 'Prompt';
+    case 'agentStateSummary':
+      return 'Agent-state summary';
+    case 'agentStateDiff':
+      return 'Agent-state diff';
   }
 }
 

@@ -2,12 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
 import type { JobRecord } from '../shared/types.js';
 import { AgentAdapters } from '../server/agent-adapters.js';
 
 async function createJobRecord(agentRuntime: 'claude' | 'codex', overrides: Partial<JobRecord['spec']> = {}): Promise<JobRecord> {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-adapter-'));
+  await mkdir(path.join(tempDir, 'inputs'), { recursive: true });
+  await mkdir(path.join(tempDir, 'outputs'), { recursive: true });
   return {
     id: `job-${agentRuntime}`,
     status: 'queued',
@@ -24,17 +26,25 @@ async function createJobRecord(agentRuntime: 'claude' | 'codex', overrides: Part
       githubHost: 'github.com',
       commitOnStop: true,
       wpEnvEnabled: true,
+      capabilityProfile: overrides.capabilityProfile ?? 'safe',
+      repoAccessMode: overrides.repoAccessMode ?? 'none',
+      agentStateMode: overrides.agentStateMode ?? 'mounted',
     },
     artifacts: {
       logPath: path.join(tempDir, 'run.log'),
-      debugLogPath: path.join(tempDir, 'debug.log'),
+      debugLogPath: path.join(tempDir, 'outputs', 'debug.log'),
+      securityAuditPath: path.join(tempDir, 'security-audit.jsonl'),
       summaryPath: path.join(tempDir, 'summary.json'),
       gitDiffPath: path.join(tempDir, 'git.diff'),
       agentTranscriptPath: path.join(tempDir, 'agent-transcript.log'),
-      finalResponsePath: path.join(tempDir, 'final-response.json'),
-      schemaPath: path.join(tempDir, 'result-schema.json'),
-      promptPath: path.join(tempDir, 'prompt.txt'),
+      finalResponsePath: path.join(tempDir, 'outputs', 'final-response.json'),
+      schemaPath: path.join(tempDir, 'inputs', 'result-schema.json'),
+      promptPath: path.join(tempDir, 'inputs', 'prompt.txt'),
       specBundlePath: path.join(tempDir, 'spec'),
+      inputsDir: path.join(tempDir, 'inputs'),
+      outputsDir: path.join(tempDir, 'outputs'),
+      agentStateSummaryPath: path.join(tempDir, 'agent-state-summary.json'),
+      agentStateDiffPath: path.join(tempDir, 'agent-state.diff'),
     },
     resolvedSpec: {
       specMode: 'bundle',
@@ -79,7 +89,7 @@ test('prepare claude run uses print mode with schema', async () => {
   assert.match(prepared.command[2], /--model 'sonnet'/);
   assert.match(prepared.command[2], /--effort 'medium'/);
   assert.match(prepared.command[2], /--dangerously-skip-permissions/);
-  assert.match(prepared.command[2], /--debug-file '\/artifacts\/debug\.log'/);
+  assert.match(prepared.command[2], /--debug-file '\/outputs\/debug\.log'/);
   assert.equal(adapters.runtimeEnvKeys('claude')[0], 'ANTHROPIC_API_KEY');
 });
 
@@ -91,7 +101,7 @@ test('prepare claude run can enable debug logging through env', async () => {
   try {
     const prepared = await adapters.prepare(job);
     assert.match(prepared.command[2], /--debug 'api,hooks'/);
-    assert.match(prepared.command[2], /--debug-file '\/artifacts\/debug\.log'/);
+    assert.match(prepared.command[2], /--debug-file '\/outputs\/debug\.log'/);
   } finally {
     delete process.env.AGENT_RUNNER_CLAUDE_DEBUG;
   }

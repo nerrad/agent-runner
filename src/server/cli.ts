@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import process from 'node:process';
+import { runWithBrokerService } from './broker-service.js';
 import { loadRuntimeConfig } from './config.js';
 import { parseCliArgs, normalizeRunSpec, formatJobSummary, helpText, defaultSkillTargets, resolveSkillTargetRoot } from './cli-utils.js';
 import { runInit } from './init.js';
@@ -18,7 +19,7 @@ async function main(): Promise<void> {
       return;
     }
     case 'run': {
-      const normalized = await normalizeRunSpec(command, runtime.git);
+      const normalized = await normalizeRunSpec(command, config, runtime.git);
       const record = await runtime.manager.createJob(normalized.jobSpec);
       process.stdout.write(`${record.id}\n`);
       if (!command.detach) {
@@ -71,7 +72,9 @@ async function main(): Promise<void> {
       return;
     }
     case 'internal-run': {
-      await runtime.manager.runJob(command.jobId);
+      await runWithBrokerService(runtime, command.jobId, async () => {
+        await runtime.manager.runJob(command.jobId);
+      });
       return;
     }
     default:
