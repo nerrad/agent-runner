@@ -9,6 +9,7 @@ import type { DockerRunRequest } from '../server/docker-runner.js';
 import { pathExists } from '../server/fs-utils.js';
 import { AgentStateAuditor } from '../server/agent-state-audit.js';
 import { BrokerLeaseStore } from '../server/broker-lease.js';
+import { DockerBroker } from '../server/docker-broker.js';
 import { JobStore } from '../server/job-store.js';
 import { JobEvents } from '../server/job-events.js';
 import type { JobManagerOptions } from '../server/job-manager.js';
@@ -249,6 +250,7 @@ function createManager(
     new AgentAdapters(),
     new AgentStateAuditor(config),
     new BrokerLeaseStore(config),
+    new DockerBroker(config),
     {
       runMode: 'inline',
       ...options,

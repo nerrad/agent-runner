@@ -33,8 +33,8 @@ export function createRuntime(config: RuntimeConfig, options: JobManagerOptions 
   const agentStateAuditor = new AgentStateAuditor(config);
   const brokerLeaseStore = new BrokerLeaseStore(config);
   const repoBroker = new RepoBroker();
-  const dockerBroker = new DockerBroker();
-  const manager = new JobManager(config, store, events, git, docker, adapters, agentStateAuditor, brokerLeaseStore, options);
+  const dockerBroker = new DockerBroker(config);
+  const manager = new JobManager(config, store, events, git, docker, adapters, agentStateAuditor, brokerLeaseStore, dockerBroker, options);
 
   return {
     config,

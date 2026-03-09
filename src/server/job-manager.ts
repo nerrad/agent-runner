@@ -7,6 +7,7 @@ import type { AgentStateAuditor } from './agent-state-audit.js';
 import type { BrokerLeaseStore } from './broker-lease.js';
 import type { RuntimeConfig } from './config.js';
 import { createGitHostProfile } from './config.js';
+import type { DockerBroker } from './docker-broker.js';
 import type { DockerRunner } from './docker-runner.js';
 import { ensureDir, safeRemove, writeJsonAtomic } from './fs-utils.js';
 import type { GitManager } from './git-manager.js';
@@ -80,6 +81,7 @@ export class JobManager {
     private readonly adapters: AgentAdapters,
     private readonly agentStateAuditor: AgentStateAuditor,
     private readonly brokerLeaseStore: BrokerLeaseStore,
+    private readonly dockerBroker: DockerBroker,
     options: JobManagerOptions = {},
   ) {
     this.activeLockPath = path.join(this.config.appDir, 'active-job.lock');
@@ -161,6 +163,8 @@ export class JobManager {
       await this.docker.stopJob(record.containerId);
     }
 
+    await this.cleanupBrokeredDockerResources(record);
+
     if (TERMINAL_STATUSES.has(record.status)) {
       return record;
     }
@@ -196,6 +200,7 @@ export class JobManager {
     try {
       const record = await this.requireJob(jobId);
       if (TERMINAL_STATUSES.has(record.status)) {
+        await this.cleanupBrokeredDockerResources(record);
         return;
       }
 
@@ -207,6 +212,10 @@ export class JobManager {
           status: 'failed',
           endedAt: new Date().toISOString(),
           blockerReason: error instanceof Error ? error.message : String(error),
+        });
+        await this.cleanupBrokeredDockerResources({
+          ...record,
+          status: 'failed',
         });
       }
     } finally {
@@ -330,6 +339,7 @@ export class JobManager {
 
     const latestRecord = await this.requireJob(record.id);
     if (latestRecord.status === 'canceled') {
+      await this.cleanupBrokeredDockerResources(latestRecord);
       await this.updateRecord(latestRecord, {
         endedAt: latestRecord.endedAt ?? new Date().toISOString(),
       });
@@ -337,6 +347,7 @@ export class JobManager {
     }
 
     if (authLoopState.blockerReason) {
+      await this.cleanupBrokeredDockerResources(latestRecord);
       await this.updateRecord(latestRecord, {
         status: 'failed',
         endedAt: new Date().toISOString(),
@@ -368,6 +379,7 @@ export class JobManager {
     await this.writeArtifacts(record, changedFiles, agentResult, stagedSpec.sourcePath, stagedSpec.specSourceType, committed, agentStateAudit);
 
     if (dockerResult.exitCode !== 0 && !agentResult) {
+      await this.cleanupBrokeredDockerResources(record);
       await this.updateRecord(record, {
         status: 'failed',
         endedAt: new Date().toISOString(),
@@ -376,11 +388,12 @@ export class JobManager {
       return;
     }
 
-    await this.updateRecord(record, {
+    const completedRecord = await this.updateRecord(record, {
       status: agentResult?.status ?? 'failed',
       blockerReason: agentResult?.blockerReason,
       endedAt: new Date().toISOString(),
     });
+    await this.cleanupBrokeredDockerResources(completedRecord);
   }
 
   private async writeArtifacts(
@@ -710,6 +723,18 @@ export class JobManager {
       return await this.brokerLeaseStore.issue(record);
     }
     return null;
+  }
+
+  private async cleanupBrokeredDockerResources(record: JobRecord): Promise<void> {
+    if (record.spec.capabilityProfile !== 'docker-broker') {
+      return;
+    }
+
+    try {
+      await this.dockerBroker.cleanupJob(record);
+    } catch (error) {
+      await this.appendRunnerLogLine(record, `docker cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private startIdleHeartbeat(target: LogTarget): IdleHeartbeat {

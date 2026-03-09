@@ -88,7 +88,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
   app.post('/broker/jobs/:jobId/docker/compose/:subcommand', async (request, response, next) => {
     try {
       const subcommand = asComposeCommand(request.params.subcommand);
-      const record = await authorizeBrokerJob(runtime, request.params.jobId, request.body.token);
+      const record = await authorizeDockerBrokerJob(runtime, request.params.jobId, request.body.token);
       const result = await runtime.dockerBroker.compose(record, subcommand, asStringArray(request.body.args, 'args'));
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
@@ -98,7 +98,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
 
   app.post('/broker/jobs/:jobId/docker/compose-exec', async (request, response, next) => {
     try {
-      const record = await authorizeBrokerJob(runtime, request.params.jobId, request.body.token);
+      const record = await authorizeDockerBrokerJob(runtime, request.params.jobId, request.body.token);
       const result = await runtime.dockerBroker.composeExec(
         record,
         asString(request.body.service, 'service'),
@@ -112,7 +112,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
 
   app.post('/broker/jobs/:jobId/docker/build', async (request, response, next) => {
     try {
-      const record = await authorizeBrokerJob(runtime, request.params.jobId, request.body.token);
+      const record = await authorizeDockerBrokerJob(runtime, request.params.jobId, request.body.token);
       const result = await runtime.dockerBroker.imageBuild(record, asStringArray(request.body.args, 'args'));
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
@@ -122,7 +122,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
 
   app.post('/broker/jobs/:jobId/docker/run', async (request, response, next) => {
     try {
-      const record = await authorizeBrokerJob(runtime, request.params.jobId, request.body.token);
+      const record = await authorizeDockerBrokerJob(runtime, request.params.jobId, request.body.token);
       const result = await runtime.dockerBroker.containerRun(record, asStringArray(request.body.args, 'args'));
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
@@ -132,7 +132,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
 
   app.post('/broker/jobs/:jobId/docker/stop', async (request, response, next) => {
     try {
-      const record = await authorizeBrokerJob(runtime, request.params.jobId, request.body.token);
+      const record = await authorizeDockerBrokerJob(runtime, request.params.jobId, request.body.token);
       const result = await runtime.dockerBroker.containerStop(record, asString(request.body.containerId, 'containerId'));
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
@@ -143,7 +143,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
   app.post('/broker/jobs/:jobId/wp-env/:subcommand', async (request, response, next) => {
     try {
       const subcommand = asWpEnvCommand(request.params.subcommand);
-      const record = await authorizeBrokerJob(runtime, request.params.jobId, request.body.token);
+      const record = await authorizeDockerBrokerJob(runtime, request.params.jobId, request.body.token);
       const result = await runtime.dockerBroker.wpEnv(record, subcommand, asStringArray(request.body.args, 'args'));
       response.status(result.exitCode === 0 ? 200 : 400).json(result);
     } catch (error) {
@@ -169,6 +169,14 @@ async function authorizeBrokerJob(runtime: RuntimeContext, jobId: string, token:
   }
   if (record.spec.capabilityProfile !== 'repo-broker' && record.spec.capabilityProfile !== 'docker-broker') {
     throw new Error('Broker access is not enabled for this job');
+  }
+  return record;
+}
+
+async function authorizeDockerBrokerJob(runtime: RuntimeContext, jobId: string, token: unknown) {
+  const record = await authorizeBrokerJob(runtime, jobId, token);
+  if (record.spec.capabilityProfile !== 'docker-broker') {
+    throw new Error('Docker broker access is not enabled for this job');
   }
   return record;
 }
