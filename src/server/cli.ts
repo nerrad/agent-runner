@@ -18,7 +18,7 @@ async function main(): Promise<void> {
       return;
     }
     case 'run': {
-      const normalized = await normalizeRunSpec(command, runtime.git);
+      const normalized = await normalizeRunSpec(command, config, runtime.git);
       const record = await runtime.manager.createJob(normalized.jobSpec);
       process.stdout.write(`${record.id}\n`);
       if (!command.detach) {

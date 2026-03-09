@@ -58,7 +58,14 @@ function normalizeLegacyJobRecord(raw: unknown): { record: unknown; changed: boo
   }
 
   const artifactRecord = artifacts as Record<string, unknown>;
-  if (typeof artifactRecord.debugLogPath === 'string' && artifactRecord.debugLogPath.length > 0) {
+  if (
+    typeof artifactRecord.debugLogPath === 'string'
+    && artifactRecord.debugLogPath.length > 0
+    && typeof artifactRecord.inputsDir === 'string'
+    && typeof artifactRecord.outputsDir === 'string'
+    && typeof artifactRecord.agentStateSummaryPath === 'string'
+    && typeof artifactRecord.agentStateDiffPath === 'string'
+  ) {
     return { record: raw, changed: false };
   }
 
@@ -72,7 +79,20 @@ function normalizeLegacyJobRecord(raw: unknown): { record: unknown; changed: boo
       ...record,
       artifacts: {
         ...artifactRecord,
-        debugLogPath: path.join(path.dirname(artifactRecord.logPath), 'debug.log'),
+        debugLogPath: path.join(path.dirname(artifactRecord.logPath), 'outputs', 'debug.log'),
+        finalResponsePath: typeof artifactRecord.finalResponsePath === 'string'
+          ? path.join(path.dirname(artifactRecord.logPath), 'outputs', path.basename(artifactRecord.finalResponsePath))
+          : path.join(path.dirname(artifactRecord.logPath), 'outputs', 'final-response.json'),
+        schemaPath: typeof artifactRecord.schemaPath === 'string'
+          ? path.join(path.dirname(artifactRecord.logPath), 'inputs', path.basename(artifactRecord.schemaPath))
+          : path.join(path.dirname(artifactRecord.logPath), 'inputs', 'result-schema.json'),
+        promptPath: typeof artifactRecord.promptPath === 'string'
+          ? path.join(path.dirname(artifactRecord.logPath), 'inputs', path.basename(artifactRecord.promptPath))
+          : path.join(path.dirname(artifactRecord.logPath), 'inputs', 'prompt.txt'),
+        inputsDir: path.join(path.dirname(artifactRecord.logPath), 'inputs'),
+        outputsDir: path.join(path.dirname(artifactRecord.logPath), 'outputs'),
+        agentStateSummaryPath: path.join(path.dirname(artifactRecord.logPath), 'agent-state-summary.json'),
+        agentStateDiffPath: path.join(path.dirname(artifactRecord.logPath), 'agent-state.diff'),
       },
     },
   };

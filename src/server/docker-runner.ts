@@ -61,6 +61,7 @@ export class DockerRunner {
     const sshMountTarget = '/tmp/agent-runner-ssh.sock';
     const ghMountTarget = '/gh-config';
     const containerHome = '/home/agent-runner';
+    const { capabilityProfile, agentStateMode } = request.job.spec;
 
     const dockerArgs = [
       'run',
@@ -75,32 +76,36 @@ export class DockerRunner {
       '--mount',
       `type=bind,src=${request.job.workspacePath},dst=/workspace`,
       '--mount',
-      `type=bind,src=${path.dirname(request.job.artifacts.logPath)},dst=/artifacts`,
-      '--mount',
       `type=bind,src=${request.job.artifacts.specBundlePath},dst=/spec,readonly`,
       '--mount',
-      `type=bind,src=${this.config.dockerSocketPath},dst=/var/run/docker.sock`,
+      `type=bind,src=${request.job.artifacts.inputsDir},dst=/inputs,readonly`,
       '--mount',
-      `type=bind,src=${this.config.ghConfigDir},dst=${ghMountTarget},readonly`,
-      '--mount',
-      `type=bind,src=${this.config.claudeDir},dst=${containerHome}/.claude`,
-      '--mount',
-      `type=bind,src=${this.config.claudeSettingsPath},dst=${containerHome}/.claude.json`,
-      '--mount',
-      `type=bind,src=${this.config.codexDir},dst=${containerHome}/.codex`,
-      '--env',
-      `DOCKER_HOST=unix:///var/run/docker.sock`,
-      '--env',
-      `GH_CONFIG_DIR=${ghMountTarget}`,
+      `type=bind,src=${request.job.artifacts.outputsDir},dst=/outputs`,
       '--env',
       `HOME=${containerHome}`,
       '--env',
       'USER=agent-runner',
       '--env',
       'LOGNAME=agent-runner',
+      '--env',
+      `AGENT_RUNNER_PROFILE=${capabilityProfile}`,
     ];
 
-    if (this.config.sshAuthSock) {
+    if (capabilityProfile === 'dangerous') {
+      dockerArgs.push('--mount', `type=bind,src=${path.dirname(request.job.artifacts.logPath)},dst=/artifacts`);
+      dockerArgs.push('--mount', `type=bind,src=${this.config.dockerSocketPath},dst=/var/run/docker.sock`);
+      dockerArgs.push('--env', `DOCKER_HOST=unix:///var/run/docker.sock`);
+      dockerArgs.push('--mount', `type=bind,src=${this.config.ghConfigDir},dst=${ghMountTarget},readonly`);
+      dockerArgs.push('--env', `GH_CONFIG_DIR=${ghMountTarget}`);
+    }
+
+    if (agentStateMode === 'mounted') {
+      dockerArgs.push('--mount', `type=bind,src=${this.config.claudeDir},dst=${containerHome}/.claude`);
+      dockerArgs.push('--mount', `type=bind,src=${this.config.claudeSettingsPath},dst=${containerHome}/.claude.json`);
+      dockerArgs.push('--mount', `type=bind,src=${this.config.codexDir},dst=${containerHome}/.codex`);
+    }
+
+    if (capabilityProfile === 'dangerous' && this.config.sshAuthSock) {
       dockerArgs.push('--mount', `type=bind,src=${this.config.sshAuthSock},dst=${sshMountTarget}`);
       dockerArgs.push('--env', `SSH_AUTH_SOCK=${sshMountTarget}`);
     }

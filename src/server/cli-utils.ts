@@ -2,6 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { stat } from 'node:fs/promises';
 import type { AgentEffort, AgentRuntime, GitHubHost, JobRecord, JobSpec } from '../shared/types.js';
+import type { RuntimeConfig } from './config.js';
 import { GitManager } from './git-manager.js';
 
 export type CliCommand =
@@ -15,6 +16,9 @@ export type CliCommand =
     host: GitHubHost;
     ref?: string;
     detach: boolean;
+    profile: JobSpec['capabilityProfile'];
+    repoAccess: JobSpec['repoAccessMode'];
+    agentState: JobSpec['agentStateMode'];
   }
   | { command: 'init' }
   | { command: 'list' }
@@ -92,6 +96,9 @@ function parseRunArgs(args: string[]): CliCommand {
   let host: GitHubHost = 'github.com';
   let ref: string | undefined;
   let detach = false;
+  let profile: JobSpec['capabilityProfile'] = 'safe';
+  let repoAccess: JobSpec['repoAccessMode'] = 'none';
+  let agentState: JobSpec['agentStateMode'] = 'mounted';
 
   for (let index = 0; index < args.length; index += 1) {
     const token = args[index];
@@ -120,13 +127,22 @@ function parseRunArgs(args: string[]): CliCommand {
       case '--detach':
         detach = true;
         break;
+      case '--profile':
+        profile = requireProfile(requireOptionValue(args, ++index, '--profile'));
+        break;
+      case '--repo-access':
+        repoAccess = requireRepoAccessMode(requireOptionValue(args, ++index, '--repo-access'));
+        break;
+      case '--agent-state':
+        agentState = requireAgentStateMode(requireOptionValue(args, ++index, '--agent-state'));
+        break;
       default:
         throw new Error(`Unknown option: ${token}`);
     }
   }
 
   if (!repo || !spec) {
-    throw new Error('Usage: agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--host <host>] [--ref <ref>] [--detach]');
+    throw new Error('Usage: agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--host <host>] [--ref <ref>] [--profile <safe|repo-broker|docker-broker|dangerous>] [--repo-access <none|broker|ambient>] [--agent-state <mounted|none>] [--detach]');
   }
 
   return {
@@ -139,6 +155,9 @@ function parseRunArgs(args: string[]): CliCommand {
     host,
     ref,
     detach,
+    profile,
+    repoAccess,
+    agentState,
   };
 }
 
@@ -171,10 +190,36 @@ function requireHost(value: string): GitHubHost {
   throw new Error(`Unsupported GitHub host: ${value}`);
 }
 
-export async function normalizeRunSpec(command: Extract<CliCommand, { command: 'run' }>, git = new GitManager()): Promise<NormalizedRunSpec> {
+function requireProfile(value: string): JobSpec['capabilityProfile'] {
+  if (value === 'safe' || value === 'repo-broker' || value === 'docker-broker' || value === 'dangerous') {
+    return value;
+  }
+  throw new Error(`Unsupported profile: ${value}`);
+}
+
+function requireRepoAccessMode(value: string): JobSpec['repoAccessMode'] {
+  if (value === 'none' || value === 'broker' || value === 'ambient') {
+    return value;
+  }
+  throw new Error(`Unsupported repo access mode: ${value}`);
+}
+
+function requireAgentStateMode(value: string): JobSpec['agentStateMode'] {
+  if (value === 'mounted' || value === 'none') {
+    return value;
+  }
+  throw new Error(`Unsupported agent state mode: ${value}`);
+}
+
+export async function normalizeRunSpec(
+  command: Extract<CliCommand, { command: 'run' }>,
+  config: RuntimeConfig,
+  git = new GitManager(),
+): Promise<NormalizedRunSpec> {
+  const repoAccess = normalizeRepoAccess(command.profile, command.repoAccess);
   if (looksLikeGitUrl(command.repo)) {
     const specPath = path.isAbsolute(command.spec)
-      ? await resolveAbsoluteSpecPath(command.spec)
+      ? await resolveAbsoluteSpecPath(command.spec, config.specRoot)
       : normalizeRelativePath(command.spec);
 
     return {
@@ -189,6 +234,9 @@ export async function normalizeRunSpec(command: Extract<CliCommand, { command: '
         githubHost: command.host,
         commitOnStop: true,
         wpEnvEnabled: true,
+        capabilityProfile: command.profile,
+        repoAccessMode: repoAccess,
+        agentStateMode: command.agentState,
       },
     };
   }
@@ -196,7 +244,7 @@ export async function normalizeRunSpec(command: Extract<CliCommand, { command: '
   const repoRoot = await git.getRepoRoot(path.resolve(command.repo));
   const repoUrl = await git.getOriginUrl(repoRoot);
   const ref = command.ref ?? await git.getCurrentBranch(repoRoot);
-  const requestedSpec = await resolveSpecPath(command.spec, repoRoot);
+  const requestedSpec = await resolveSpecPath(command.spec, repoRoot, config.specRoot);
 
   return {
     repoSource: 'local',
@@ -211,18 +259,41 @@ export async function normalizeRunSpec(command: Extract<CliCommand, { command: '
       githubHost: command.host,
       commitOnStop: true,
       wpEnvEnabled: true,
+      capabilityProfile: command.profile,
+      repoAccessMode: repoAccess,
+      agentStateMode: command.agentState,
     },
   };
 }
 
-async function resolveAbsoluteSpecPath(spec: string): Promise<string> {
-  await assertExists(spec, '--spec');
-  return path.resolve(spec);
+function normalizeRepoAccess(
+  profile: JobSpec['capabilityProfile'],
+  requested: JobSpec['repoAccessMode'],
+): JobSpec['repoAccessMode'] {
+  if (profile === 'dangerous') {
+    return requested === 'none' ? 'ambient' : requested;
+  }
+
+  if (profile === 'safe') {
+    return 'none';
+  }
+
+  return requested === 'ambient' ? 'broker' : requested === 'none' ? 'broker' : requested;
 }
 
-async function resolveSpecPath(spec: string, repoRoot: string): Promise<string> {
+async function resolveAbsoluteSpecPath(spec: string, specRoot: string): Promise<string> {
+  await assertExists(spec, '--spec');
+  const resolved = path.resolve(spec);
+  const normalizedRoot = path.resolve(specRoot);
+  if (!isInsideRoot(resolved, normalizedRoot)) {
+    throw new Error(`Absolute --spec paths must stay inside ${normalizedRoot}`);
+  }
+  return resolved;
+}
+
+async function resolveSpecPath(spec: string, repoRoot: string, specRoot: string): Promise<string> {
   if (path.isAbsolute(spec)) {
-    return await resolveAbsoluteSpecPath(spec);
+    return await resolveAbsoluteSpecPath(spec, specRoot);
   }
 
   const resolved = path.resolve(repoRoot, spec);
@@ -313,7 +384,7 @@ export function helpText(): string {
   return [
     'agent-runner commands:',
     '  agent-runner init',
-    '  agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--host <github-host>] [--ref <ref>] [--detach]',
+    '  agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--host <github-host>] [--ref <ref>] [--profile <safe|repo-broker|docker-broker|dangerous>] [--repo-access <none|broker|ambient>] [--agent-state <mounted|none>] [--detach]',
     '  agent-runner list',
     '  agent-runner show <job-id>',
     '  agent-runner logs <job-id> [--follow] [--debug]',

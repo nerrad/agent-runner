@@ -3,6 +3,8 @@ import { appendFile, open, readFile, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path';
 import type { AgentResult, JobRecord, JobSpec, JobStatus } from '../shared/types.js';
 import { AgentResultSchema, JobSpecSchema } from '../shared/types.js';
+import type { AgentStateAuditor } from './agent-state-audit.js';
+import type { BrokerLeaseStore } from './broker-lease.js';
 import type { RuntimeConfig } from './config.js';
 import { createGitHostProfile } from './config.js';
 import type { DockerRunner } from './docker-runner.js';
@@ -35,6 +37,10 @@ interface JobLockPayload {
 interface ResolvedRuntimeAuth {
   env: Record<string, string>;
   source: 'env';
+}
+
+interface AgentStateAuditResult {
+  changed: boolean;
 }
 
 interface AuthLoopState {
@@ -72,6 +78,8 @@ export class JobManager {
     private readonly git: GitManager,
     private readonly docker: DockerRunner,
     private readonly adapters: AgentAdapters,
+    private readonly agentStateAuditor: AgentStateAuditor,
+    private readonly brokerLeaseStore: BrokerLeaseStore,
     options: JobManagerOptions = {},
   ) {
     this.activeLockPath = path.join(this.config.appDir, 'active-job.lock');
@@ -82,7 +90,8 @@ export class JobManager {
   }
 
   async createJob(input: JobSpec): Promise<JobRecord> {
-    const spec = JobSpecSchema.parse(input);
+    const parsed = JobSpecSchema.parse(input);
+    const spec = this.normalizeJobSpec(parsed);
     const id = randomUUID();
     const now = new Date().toISOString();
     const paths = buildJobPaths(this.config, id);
@@ -91,6 +100,10 @@ export class JobManager {
     await ensureDir(paths.jobDir);
     await ensureDir(path.dirname(paths.workspacePath));
     await ensureDir(paths.artifactDir);
+    await ensureDir(paths.artifacts.inputsDir);
+    await ensureDir(paths.artifacts.outputsDir);
+
+    this.validateAbsoluteSpecPath(spec.specPath);
 
     const record: JobRecord = {
       id,
@@ -210,6 +223,10 @@ export class JobManager {
     const profile = createGitHostProfile(this.config, record.spec.githubHost);
     const runtimeAuth = await this.resolveRuntimeAuth(record.spec.agentRuntime);
     const runtimeEnv: Record<string, string> = runtimeAuth.ok ? { ...runtimeAuth.value.env } : {};
+    let agentStateBefore = record.spec.agentStateMode === 'mounted'
+      ? await this.agentStateAuditor.captureSnapshot()
+      : null;
+    let agentStateAudit: AgentStateAuditResult | null = null;
 
     if (profile.proxyUrl) {
       runtimeEnv.HTTPS_PROXY = profile.proxyUrl;
@@ -248,12 +265,19 @@ export class JobManager {
     });
     await this.appendRunnerLogLine(logTarget, 'bootstrapping workspace and staging spec bundle');
 
-    const stagedSpec = await stageSpecBundle(record.workspacePath, record.spec.specPath, record.artifacts.specBundlePath);
+    const stagedSpec = await stageSpecBundle(record.workspacePath, record.spec.specPath, record.artifacts.specBundlePath, this.config.specRoot);
     record = await this.updateRecord(record, {
       resolvedSpec: stagedSpec.resolvedSpec,
+      specSourceType: stagedSpec.specSourceType,
     });
 
     const prepared = await this.adapters.prepare(record);
+    const brokerLease = await this.maybeIssueBrokerLease(record);
+    if (brokerLease) {
+      runtimeEnv.AGENT_RUNNER_BROKER_TOKEN = brokerLease.token;
+      runtimeEnv.AGENT_RUNNER_BROKER_URL = this.config.brokerUrl;
+      runtimeEnv.AGENT_RUNNER_JOB_ID = record.id;
+    }
     await this.appendRunnerLogLine(logTarget, 'building worker image and launching agent');
     await this.docker.ensureImageBuilt();
 
@@ -296,6 +320,12 @@ export class JobManager {
     } finally {
       heartbeat.stop();
       await debugLogFollower.stop();
+      if (agentStateBefore) {
+        const agentStateAfter = await this.agentStateAuditor.captureSnapshot();
+        const summary = await this.agentStateAuditor.writeAudit(record.artifacts, agentStateBefore, agentStateAfter);
+        agentStateAudit = { changed: summary.changed };
+        agentStateBefore = null;
+      }
     }
 
     const latestRecord = await this.requireJob(record.id);
@@ -335,7 +365,7 @@ export class JobManager {
     record = await this.updateRecord(record, {
       headSha,
     });
-    await this.writeArtifacts(record, changedFiles, agentResult, stagedSpec.sourcePath, committed);
+    await this.writeArtifacts(record, changedFiles, agentResult, stagedSpec.sourcePath, stagedSpec.specSourceType, committed, agentStateAudit);
 
     if (dockerResult.exitCode !== 0 && !agentResult) {
       await this.updateRecord(record, {
@@ -358,7 +388,9 @@ export class JobManager {
     changedFiles: string[],
     agentResult: AgentResult | null,
     sourceSpecPath: string,
+    specSourceType: 'repo-relative' | 'external-spec-root',
     committed: boolean,
+    agentStateAudit: AgentStateAuditResult | null,
   ): Promise<void> {
     let finalResponseContent = '';
     try {
@@ -397,7 +429,9 @@ export class JobManager {
       workspacePath: record.workspacePath,
       specPath: record.spec.specPath,
       sourceSpecPath,
+      specSourceType,
       resolvedSpec: record.resolvedSpec,
+      agentStateModified: agentStateAudit?.changed ?? false,
     });
   }
 
@@ -642,6 +676,40 @@ export class JobManager {
 
   private async appendRunnerLogLine(target: LogTarget, message: string): Promise<void> {
     await this.appendLogLine(target, `${RUNNER_LOG_PREFIX} ${message}`);
+  }
+
+  private normalizeJobSpec(spec: JobSpec): JobSpec {
+    const capabilityProfile = spec.capabilityProfile ?? 'safe';
+    const repoAccessMode = capabilityProfile === 'dangerous'
+      ? (spec.repoAccessMode === 'none' ? 'ambient' : spec.repoAccessMode)
+      : capabilityProfile === 'safe'
+        ? 'none'
+        : (spec.repoAccessMode === 'ambient' || spec.repoAccessMode === 'none' ? 'broker' : spec.repoAccessMode);
+
+    return {
+      ...spec,
+      capabilityProfile,
+      repoAccessMode,
+      agentStateMode: spec.agentStateMode ?? 'mounted',
+    };
+  }
+
+  private validateAbsoluteSpecPath(specPath: string): void {
+    if (!path.isAbsolute(specPath)) {
+      return;
+    }
+
+    const relative = path.relative(this.config.specRoot, specPath);
+    if (relative !== '' && (relative.startsWith('..') || path.isAbsolute(relative))) {
+      throw new Error(`Absolute spec paths must stay inside ${this.config.specRoot}`);
+    }
+  }
+
+  private async maybeIssueBrokerLease(record: JobRecord) {
+    if (record.spec.capabilityProfile === 'repo-broker' || record.spec.capabilityProfile === 'docker-broker') {
+      return await this.brokerLeaseStore.issue(record);
+    }
+    return null;
   }
 
   private startIdleHeartbeat(target: LogTarget): IdleHeartbeat {

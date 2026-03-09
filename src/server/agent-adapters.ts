@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentEffort, AgentResult, AgentRuntime, JobRecord, JobSpec } from '../shared/types.js';
 
@@ -68,6 +68,10 @@ export class AgentAdapters {
       required: [ 'status', 'summary', 'blockerReason' ],
     });
 
+    await mkdir(path.dirname(job.artifacts.promptPath), { recursive: true });
+    await mkdir(path.dirname(job.artifacts.schemaPath), { recursive: true });
+    await mkdir(path.dirname(job.artifacts.finalResponsePath), { recursive: true });
+    await mkdir(path.dirname(job.artifacts.debugLogPath), { recursive: true });
     await writeFile(job.artifacts.promptPath, prompt, 'utf8');
     await writeFile(job.artifacts.schemaPath, schemaJson, 'utf8');
 
@@ -108,7 +112,7 @@ export class AgentAdapters {
 }
 
 function buildAgentPrompt(spec: JobSpec, branchName: string): string {
-  return [
+  const lines = [
     'You are running inside agent-runner, an externally sandboxed autonomous worker.',
     `Repository root: /workspace`,
     'Spec entrypoint: /spec/plan.md',
@@ -116,11 +120,13 @@ function buildAgentPrompt(spec: JobSpec, branchName: string): string {
     `Runtime: ${spec.agentRuntime}`,
     `Model preference: ${spec.model ?? 'runtime default'}`,
     `Effort preference: ${spec.effort}`,
+    `Capability profile: ${spec.capabilityProfile}`,
+    `Repo access mode: ${spec.repoAccessMode}`,
+    `Agent state mode: ${spec.agentStateMode}`,
     '',
     'Requirements:',
     '- Start with /spec/plan.md and work until the plan is complete or a hard blocker prevents progress.',
     '- Read /spec/shape.md, /spec/standards.md, /spec/references.md, and /spec/visuals only when they are relevant to the work.',
-    '- You have full permissions inside this container. Do not wait for approval prompts.',
     '- Run any relevant build, test, or validation steps yourself.',
     '- If you hit a hard blocker, capture the blocker precisely.',
     '- Your final response must be JSON matching the required schema only.',
@@ -134,7 +140,27 @@ function buildAgentPrompt(spec: JobSpec, branchName: string): string {
     'Blocker rule:',
     '- Use status "blocked" only for missing credentials, missing external access, missing required files, or irreducible ambiguity.',
     '- Otherwise complete the work and use status "completed".',
-  ].join('\n');
+  ];
+
+  if (spec.capabilityProfile === 'dangerous') {
+    lines.push('', 'Dangerous mode:', '- Broad host credentials and Docker access may be available.');
+  } else {
+    lines.push('', 'Brokered host access:', '- Do not expect raw host credentials or the host Docker socket to be available.');
+    if (spec.repoAccessMode === 'broker') {
+      lines.push('- Use `ar-git` and `ar-gh` for brokered read-only repo inspection.');
+      lines.push('- Use `ar-git-push`, `ar-pr-create`, and `ar-pr-comment` for brokered repo writes.');
+    }
+    if (spec.capabilityProfile === 'docker-broker') {
+      lines.push('- Use `ar-docker-compose-up`, `ar-docker-compose-down`, `ar-docker-logs`, `ar-docker-exec`, `ar-wp-env-start`, and `ar-wp-env-run` for brokered Docker operations.');
+      lines.push('- Do not expect raw `docker` daemon access inside the worker.');
+    }
+  }
+
+  if (spec.agentStateMode === 'mounted') {
+    lines.push('', 'Mounted agent state:', '- Host agent config, auth, and instruction state are mounted and may be audited after the run.');
+  }
+
+  return lines.join('\n');
 }
 
 function buildCodexCommand(spec: JobSpec, schemaPath: string, outputPath: string): string[] {
@@ -158,8 +184,8 @@ function buildCodexCommand(spec: JobSpec, schemaPath: string, outputPath: string
     '-lc',
     [
       'set -euo pipefail',
-      'PROMPT="$(cat /artifacts/prompt.txt)"',
-      `${optionParts.join(' ')} --output-schema /artifacts/${path.basename(schemaPath)} -o /artifacts/${path.basename(outputPath)} "$PROMPT"`,
+      'PROMPT="$(cat /inputs/prompt.txt)"',
+      `${optionParts.join(' ')} --output-schema /inputs/${path.basename(schemaPath)} -o /outputs/${path.basename(outputPath)} "$PROMPT"`,
     ].join('\n'),
   ];
 }
@@ -169,7 +195,7 @@ function buildClaudeCommand(spec: JobSpec, outputPath: string, debugLogPath: str
     'claude -p',
     '--dangerously-skip-permissions',
     '--output-format json',
-    `--debug-file ${shellQuote(`/artifacts/${path.basename(debugLogPath)}`)}`,
+    `--debug-file ${shellQuote(`/outputs/${path.basename(debugLogPath)}`)}`,
   ];
   const claudeDebug = process.env.AGENT_RUNNER_CLAUDE_DEBUG?.trim();
 
@@ -193,9 +219,9 @@ function buildClaudeCommand(spec: JobSpec, outputPath: string, debugLogPath: str
     '-lc',
     [
       'set -euo pipefail',
-      'PROMPT="$(cat /artifacts/prompt.txt)"',
-      'SCHEMA="$(cat /artifacts/result-schema.json)"',
-      `${optionParts.join(' ')} --json-schema "$SCHEMA" "$PROMPT" > /artifacts/${path.basename(outputPath)}`,
+      'PROMPT="$(cat /inputs/prompt.txt)"',
+      'SCHEMA="$(cat /inputs/result-schema.json)"',
+      `${optionParts.join(' ')} --json-schema "$SCHEMA" "$PROMPT" > /outputs/${path.basename(outputPath)}`,
     ].join('\n'),
   ];
 }
