@@ -12,6 +12,7 @@ const runtimeConfig: RuntimeConfig = {
   jobsDir: '/tmp/agent-runner/jobs',
   workspacesDir: '/tmp/agent-runner/workspaces',
   artifactsDir: '/tmp/agent-runner/artifacts',
+  specRoot: '/tmp/agent-runner/specs',
   ghConfigDir: path.join(homeDir, '.config', 'gh'),
   claudeDir: path.join(homeDir, '.claude'),
   claudeSettingsPath: path.join(homeDir, '.claude.json'),
@@ -23,6 +24,10 @@ const runtimeConfig: RuntimeConfig = {
   githubProxyUrl: 'socks5://host.docker.internal:8080',
   workerImageTag: 'agent-runner-worker:latest',
   sourceRoot: path.join(homeDir, 'agent-runner'),
+  brokerPort: 4318,
+  brokerHost: 'host.docker.internal',
+  brokerUrl: 'http://host.docker.internal:4318',
+  uiSessionToken: 'session-token',
 };
 
 const jobRecord: JobRecord = {
@@ -40,17 +45,24 @@ const jobRecord: JobRecord = {
     githubHost: 'github.com',
     commitOnStop: true,
     wpEnvEnabled: true,
+    capabilityProfile: 'dangerous',
+    repoAccessMode: 'ambient',
+    agentStateMode: 'mounted',
   },
   artifacts: {
     logPath: '/tmp/agent-runner/artifacts/job-123/run.log',
-    debugLogPath: '/tmp/agent-runner/artifacts/job-123/debug.log',
+    debugLogPath: '/tmp/agent-runner/artifacts/job-123/outputs/debug.log',
     summaryPath: '/tmp/agent-runner/artifacts/job-123/summary.json',
     gitDiffPath: '/tmp/agent-runner/artifacts/job-123/git.diff',
     agentTranscriptPath: '/tmp/agent-runner/artifacts/job-123/agent-transcript.log',
-    finalResponsePath: '/tmp/agent-runner/artifacts/job-123/final-response.json',
-    schemaPath: '/tmp/agent-runner/artifacts/job-123/result-schema.json',
-    promptPath: '/tmp/agent-runner/artifacts/job-123/prompt.txt',
+    finalResponsePath: '/tmp/agent-runner/artifacts/job-123/outputs/final-response.json',
+    schemaPath: '/tmp/agent-runner/artifacts/job-123/inputs/result-schema.json',
+    promptPath: '/tmp/agent-runner/artifacts/job-123/inputs/prompt.txt',
     specBundlePath: '/tmp/agent-runner/artifacts/job-123/spec',
+    inputsDir: '/tmp/agent-runner/artifacts/job-123/inputs',
+    outputsDir: '/tmp/agent-runner/artifacts/job-123/outputs',
+    agentStateSummaryPath: '/tmp/agent-runner/artifacts/job-123/agent-state-summary.json',
+    agentStateDiffPath: '/tmp/agent-runner/artifacts/job-123/agent-state.diff',
   },
   resolvedSpec: {
     specMode: 'bundle',
@@ -74,6 +86,8 @@ test('docker runner mounts local claude/codex state into the worker home', () =>
   assert.match(commandString, /src=\/home\/tester\/\.claude\.json,dst=\/home\/agent-runner\/\.claude\.json/);
   assert.match(commandString, /src=\/home\/tester\/\.codex,dst=\/home\/agent-runner\/\.codex/);
   assert.match(commandString, /src=\/tmp\/agent-runner\/artifacts\/job-123\/spec,dst=\/spec,readonly/);
+  assert.match(commandString, /src=\/tmp\/agent-runner\/artifacts\/job-123\/inputs,dst=\/inputs,readonly/);
+  assert.match(commandString, /src=\/tmp\/agent-runner\/artifacts\/job-123\/outputs,dst=\/outputs/);
   assert.match(commandString, /HOME=\/home\/agent-runner/);
   assert.match(commandString, /USER=agent-runner/);
   assert.match(commandString, /GH_CONFIG_DIR=\/gh-config/);

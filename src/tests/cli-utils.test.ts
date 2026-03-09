@@ -5,6 +5,32 @@ import path from 'node:path';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { formatJobSummary, normalizeRunSpec, parseCliArgs, resolveSkillTargetRoot } from '../server/cli-utils.js';
 import { runCommand } from '../server/process-utils.js';
+import type { RuntimeConfig } from '../server/config.js';
+
+function createRuntimeConfig(root: string): RuntimeConfig {
+  return {
+    appDir: root,
+    jobsDir: path.join(root, 'jobs'),
+    workspacesDir: path.join(root, 'workspaces'),
+    artifactsDir: path.join(root, 'artifacts'),
+    specRoot: path.join(root, 'specs'),
+    ghConfigDir: path.join(root, 'gh'),
+    claudeDir: path.join(root, 'claude'),
+    claudeSettingsPath: path.join(root, '.claude.json'),
+    codexDir: path.join(root, 'codex'),
+    dockerSocketPath: '/tmp/docker.sock',
+    hostUid: 501,
+    hostGid: 20,
+    sshAuthSock: '/tmp/ssh.sock',
+    githubProxyUrl: 'socks5://host.docker.internal:8080',
+    workerImageTag: 'agent-runner-worker:latest',
+    sourceRoot: path.resolve(new URL('../..', import.meta.url).pathname),
+    brokerPort: 4318,
+    brokerHost: 'host.docker.internal',
+    brokerUrl: 'http://host.docker.internal:4318',
+    uiSessionToken: 'session-token',
+  };
+}
 
 test('parseCliArgs handles run and installer commands', () => {
   const init = parseCliArgs([ 'init' ]);
@@ -39,6 +65,9 @@ test('parseCliArgs handles run and installer commands', () => {
     host: 'github.example.com',
     ref: undefined,
     detach: true,
+    profile: 'safe',
+    repoAccess: 'none',
+    agentState: 'mounted',
   });
 
   const install = parseCliArgs([ 'skills', 'install', '--force', '--claude-only' ]);
@@ -64,6 +93,7 @@ test('normalizeRunSpec converts a local repo path into a remote url and repo-rel
   await runCommand('git', [ '-C', root, 'remote', 'add', 'origin', 'git@github.com:owner/repo.git' ]);
   await runCommand('git', [ '-C', root, 'checkout', '-b', 'feature/spec-bundle' ]);
 
+  const config = createRuntimeConfig(root);
   const normalized = await normalizeRunSpec({
     command: 'run',
     repo: root,
@@ -73,19 +103,27 @@ test('normalizeRunSpec converts a local repo path into a remote url and repo-rel
     effort: 'medium',
     host: 'github.com',
     detach: false,
-  });
+    profile: 'safe',
+    repoAccess: 'none',
+    agentState: 'mounted',
+  }, config);
 
   assert.equal(normalized.jobSpec.repoUrl, 'git@github.com:owner/repo.git');
   assert.equal(normalized.jobSpec.ref, 'feature/spec-bundle');
   assert.equal(normalized.jobSpec.specPath, 'agent-os/specs/example');
   assert.equal(normalized.jobSpec.model, 'o3');
   assert.equal(normalized.jobSpec.effort, 'medium');
+  assert.equal(normalized.jobSpec.capabilityProfile, 'safe');
+  assert.equal(normalized.jobSpec.agentStateMode, 'mounted');
 });
 
 test('normalizeRunSpec accepts absolute spec paths for git URLs', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-cli-abs-spec-'));
-  const planPath = path.join(root, 'external-plan.md');
+  const specRoot = path.join(root, 'specs');
+  await mkdir(specRoot, { recursive: true });
+  const planPath = path.join(specRoot, 'external-plan.md');
   await writeFile(planPath, '# External plan\n', 'utf8');
+  const config = createRuntimeConfig(root);
 
   const normalized = await normalizeRunSpec({
     command: 'run',
@@ -95,7 +133,10 @@ test('normalizeRunSpec accepts absolute spec paths for git URLs', async () => {
     effort: 'auto',
     host: 'github.com',
     detach: false,
-  });
+    profile: 'safe',
+    repoAccess: 'none',
+    agentState: 'mounted',
+  }, config);
 
   assert.equal(normalized.repoSource, 'url');
   assert.equal(normalized.jobSpec.specPath, planPath);
@@ -123,17 +164,24 @@ test('formatJobSummary includes blocker reasons when present', () => {
       githubHost: 'github.com',
       commitOnStop: true,
       wpEnvEnabled: true,
+      capabilityProfile: 'dangerous',
+      repoAccessMode: 'ambient',
+      agentStateMode: 'mounted',
     },
     artifacts: {
       logPath: '/tmp/log',
-      debugLogPath: '/tmp/debug.log',
+      debugLogPath: '/tmp/outputs/debug.log',
       summaryPath: '/tmp/summary.json',
       gitDiffPath: '/tmp/git.diff',
       agentTranscriptPath: '/tmp/transcript.log',
-      finalResponsePath: '/tmp/final.json',
-      schemaPath: '/tmp/schema.json',
-      promptPath: '/tmp/prompt.txt',
+      finalResponsePath: '/tmp/outputs/final.json',
+      schemaPath: '/tmp/inputs/schema.json',
+      promptPath: '/tmp/inputs/prompt.txt',
       specBundlePath: '/tmp/spec',
+      inputsDir: '/tmp/inputs',
+      outputsDir: '/tmp/outputs',
+      agentStateSummaryPath: '/tmp/agent-state-summary.json',
+      agentStateDiffPath: '/tmp/agent-state.diff',
     },
   });
 

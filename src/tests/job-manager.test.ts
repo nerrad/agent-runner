@@ -7,6 +7,8 @@ import type { AgentResult, JobRecord } from '../shared/types.js';
 import type { RuntimeConfig } from '../server/config.js';
 import type { DockerRunRequest } from '../server/docker-runner.js';
 import { pathExists } from '../server/fs-utils.js';
+import { AgentStateAuditor } from '../server/agent-state-audit.js';
+import { BrokerLeaseStore } from '../server/broker-lease.js';
 import { JobStore } from '../server/job-store.js';
 import { JobEvents } from '../server/job-events.js';
 import type { JobManagerOptions } from '../server/job-manager.js';
@@ -207,6 +209,7 @@ function createRuntimeConfig(root: string): RuntimeConfig {
     jobsDir: path.join(root, 'jobs'),
     workspacesDir: path.join(root, 'workspaces'),
     artifactsDir: path.join(root, 'artifacts'),
+    specRoot: path.join(root, 'specs'),
     ghConfigDir: path.join(root, 'gh'),
     claudeDir: path.join(root, 'claude'),
     claudeSettingsPath: path.join(root, '.claude.json'),
@@ -218,6 +221,10 @@ function createRuntimeConfig(root: string): RuntimeConfig {
     githubProxyUrl: 'socks5://host.docker.internal:8080',
     workerImageTag: 'agent-runner-worker:latest',
     sourceRoot: path.resolve(new URL('../..', import.meta.url).pathname),
+    brokerPort: 4318,
+    brokerHost: 'host.docker.internal',
+    brokerUrl: 'http://host.docker.internal:4318',
+    uiSessionToken: 'session-token',
   };
 }
 
@@ -240,6 +247,8 @@ function createManager(
     new MockGitManager() as never,
     docker as never,
     new AgentAdapters(),
+    new AgentStateAuditor(config),
+    new BrokerLeaseStore(config),
     {
       runMode: 'inline',
       ...options,
@@ -284,6 +293,9 @@ async function createJob(manager: JobManager, agentRuntime: 'claude' | 'codex'):
     githubHost: 'github.com',
     commitOnStop: true,
     wpEnvEnabled: true,
+    capabilityProfile: 'dangerous',
+    repoAccessMode: 'ambient',
+    agentStateMode: 'mounted',
   });
 }
 

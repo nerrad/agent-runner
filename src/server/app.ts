@@ -203,6 +203,10 @@ function getArtifactDescriptor(
       return { absolutePath: record.artifacts.finalResponsePath, label: 'final response' };
     case 'prompt':
       return { absolutePath: record.artifacts.promptPath, label: 'prompt' };
+    case 'agentStateSummary':
+      return { absolutePath: record.artifacts.agentStateSummaryPath, label: 'agent state summary' };
+    case 'agentStateDiff':
+      return { absolutePath: record.artifacts.agentStateDiffPath, label: 'agent state diff' };
   }
 }
 

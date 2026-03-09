@@ -13,6 +13,7 @@ function createRuntimeConfig(root: string): RuntimeConfig {
     jobsDir: path.join(root, '.agent-runner', 'jobs'),
     workspacesDir: path.join(root, '.agent-runner', 'workspaces'),
     artifactsDir: path.join(root, '.agent-runner', 'artifacts'),
+    specRoot: path.join(root, '.agent-runner', 'specs'),
     ghConfigDir: path.join(root, '.config', 'gh'),
     claudeDir: path.join(root, '.claude'),
     claudeSettingsPath: path.join(root, '.claude.json'),
@@ -21,6 +22,10 @@ function createRuntimeConfig(root: string): RuntimeConfig {
     githubProxyUrl: undefined,
     workerImageTag: 'agent-runner-worker:latest',
     sourceRoot: root,
+    brokerPort: 4318,
+    brokerHost: 'host.docker.internal',
+    brokerUrl: 'http://host.docker.internal:4318',
+    uiSessionToken: 'session-token',
   };
 }
 

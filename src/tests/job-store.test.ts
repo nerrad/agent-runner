@@ -13,6 +13,7 @@ function createRuntimeConfig(root: string): RuntimeConfig {
     jobsDir: path.join(root, 'jobs'),
     workspacesDir: path.join(root, 'workspaces'),
     artifactsDir: path.join(root, 'artifacts'),
+    specRoot: path.join(root, 'specs'),
     ghConfigDir: path.join(root, 'gh'),
     claudeDir: path.join(root, 'claude'),
     claudeSettingsPath: path.join(root, '.claude.json'),
@@ -24,6 +25,10 @@ function createRuntimeConfig(root: string): RuntimeConfig {
     githubProxyUrl: 'socks5://host.docker.internal:8080',
     workerImageTag: 'agent-runner-worker:latest',
     sourceRoot: path.resolve(new URL('../..', import.meta.url).pathname),
+    brokerPort: 4318,
+    brokerHost: 'host.docker.internal',
+    brokerUrl: 'http://host.docker.internal:4318',
+    uiSessionToken: 'session-token',
   };
 }
 
@@ -49,6 +54,9 @@ test('job store backfills debugLogPath for legacy persisted jobs', async () => {
       githubHost: 'github.com',
       commitOnStop: true,
       wpEnvEnabled: true,
+      capabilityProfile: 'dangerous',
+      repoAccessMode: 'ambient',
+      agentStateMode: 'mounted',
     },
     artifacts: {
       logPath: '/tmp/agent-runner/artifacts/legacy-job/run.log',
@@ -65,9 +73,11 @@ test('job store backfills debugLogPath for legacy persisted jobs', async () => {
   const record = await store.get(jobId);
 
   assert.ok(record);
-  assert.equal(record.artifacts.debugLogPath, '/tmp/agent-runner/artifacts/legacy-job/debug.log');
+  assert.equal(record.artifacts.debugLogPath, '/tmp/agent-runner/artifacts/legacy-job/outputs/debug.log');
+  assert.equal(record.artifacts.inputsDir, '/tmp/agent-runner/artifacts/legacy-job/inputs');
+  assert.equal(record.artifacts.outputsDir, '/tmp/agent-runner/artifacts/legacy-job/outputs');
 
   const records = await store.list();
   assert.equal(records.length, 1);
-  assert.equal(records[0]?.artifacts.debugLogPath, '/tmp/agent-runner/artifacts/legacy-job/debug.log');
+  assert.equal(records[0]?.artifacts.debugLogPath, '/tmp/agent-runner/artifacts/legacy-job/outputs/debug.log');
 });
