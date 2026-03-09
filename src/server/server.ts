@@ -1,9 +1,9 @@
 import path from 'node:path';
-import { createServer } from 'node:http';
 import type { Server } from 'node:http';
-import { ensureBrokerService, listenServer } from './broker-service.js';
+import { ensureBrokerService } from './broker-service.js';
 import { loadRuntimeConfig } from './config.js';
 import { createApp, serveClient } from './app.js';
+import { listenOnAvailablePort } from './listen.js';
 import { createRuntime } from './runtime.js';
 
 const port = Number.parseInt(process.env.PORT ?? '4317', 10);
@@ -15,14 +15,15 @@ async function main(): Promise<void> {
   await serveClient(app, path.join(config.sourceRoot, 'dist', 'client'));
   const broker = await ensureBrokerService(runtime);
 
-  const appServer: Server = createServer(app);
+  let appServer: Server | undefined;
   try {
-    await listenServer(appServer, port, '127.0.0.1');
-    process.stdout.write(`agent-runner listening on http://127.0.0.1:${port}\n`);
+    const listening = await listenOnAvailablePort(app, port);
+    appServer = listening.server;
+    process.stdout.write(`agent-runner listening on http://127.0.0.1:${listening.port}\n`);
     process.stdout.write(`agent-runner broker listening on ${config.brokerUrl}${broker.reusedExisting ? ' (reused existing)' : ''}\n`);
   } catch (error) {
     await broker.close().catch(() => undefined);
-    appServer.close();
+    appServer?.close();
     throw error;
   }
 

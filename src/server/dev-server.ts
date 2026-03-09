@@ -1,9 +1,9 @@
 import { createServer as createViteServer } from 'vite';
 import type { Server } from 'node:http';
-import { createServer } from 'node:http';
-import { ensureBrokerService, listenServer } from './broker-service.js';
+import { ensureBrokerService } from './broker-service.js';
 import { loadRuntimeConfig } from './config.js';
 import { createApp } from './app.js';
+import { listenOnAvailablePort } from './listen.js';
 import { createRuntime } from './runtime.js';
 
 const port = Number.parseInt(process.env.PORT ?? '4317', 10);
@@ -21,9 +21,9 @@ async function main(): Promise<void> {
   app.use(vite.middlewares);
   let appServer: Server | undefined;
   try {
-    appServer = createServer(app);
-    await listenServer(appServer, port, '127.0.0.1');
-    process.stdout.write(`agent-runner dev server listening on http://127.0.0.1:${port}\n`);
+    const listening = await listenOnAvailablePort(app, port);
+    appServer = listening.server;
+    process.stdout.write(`agent-runner dev server listening on http://127.0.0.1:${listening.port}\n`);
     process.stdout.write(`agent-runner broker listening on ${config.brokerUrl}${broker.reusedExisting ? ' (reused existing)' : ''}\n`);
   } catch (error) {
     await broker.close().catch(() => undefined);

@@ -202,7 +202,7 @@ pnpm install
 pnpm dev
 ```
 
-Open [http://127.0.0.1:4317](http://127.0.0.1:4317).
+Open the localhost URL printed at startup. `4317` is still the preferred default, but agent-runner now falls back to another open localhost port if `4317` is already in use.
 
 ## CLI
 
