@@ -74,6 +74,9 @@ export class DockerRunner {
       '/workspace',
       '--user',
       `${this.config.hostUid ?? 1000}:${this.config.hostGid ?? 1000}`,
+      // OrbStack exposes the mounted Docker socket as root:root inside the worker.
+      '--group-add',
+      '0',
       '--mount',
       `type=bind,src=${request.job.workspacePath},dst=/workspace`,
       '--mount',
