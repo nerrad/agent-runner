@@ -66,6 +66,7 @@ async function normalizeLegacyJobRecord(raw: unknown): Promise<{ record: unknown
     && artifactRecord.securityAuditPath.length > 0;
   const hasInputsDir = typeof artifactRecord.inputsDir === 'string' && artifactRecord.inputsDir.length > 0;
   const hasOutputsDir = typeof artifactRecord.outputsDir === 'string' && artifactRecord.outputsDir.length > 0;
+  const hasBrokerEnvPath = typeof artifactRecord.brokerEnvPath === 'string' && artifactRecord.brokerEnvPath.length > 0;
   const hasAgentStateSummaryPath = typeof artifactRecord.agentStateSummaryPath === 'string'
     && artifactRecord.agentStateSummaryPath.length > 0;
   const hasAgentStateDiffPath = typeof artifactRecord.agentStateDiffPath === 'string'
@@ -77,6 +78,7 @@ async function normalizeLegacyJobRecord(raw: unknown): Promise<{ record: unknown
     && hasSecurityAuditPath
     && hasInputsDir
     && hasOutputsDir
+    && hasBrokerEnvPath
     && hasAgentStateSummaryPath
     && hasAgentStateDiffPath
   ) {
@@ -118,6 +120,12 @@ async function normalizeLegacyJobRecord(raw: unknown): Promise<{ record: unknown
             path.join(path.dirname(artifactRecord.logPath), 'inputs', path.basename(artifactRecord.promptPath)),
           )
           : path.join(path.dirname(artifactRecord.logPath), 'inputs', 'prompt.txt'),
+        brokerEnvPath: hasBrokerEnvPath
+          ? preserveLegacyPath(
+            artifactRecord.brokerEnvPath as string,
+            path.join(path.dirname(artifactRecord.logPath), 'inputs', 'broker-env.json'),
+          )
+          : path.join(path.dirname(artifactRecord.logPath), 'inputs', 'broker-env.json'),
         inputsDir: path.join(path.dirname(artifactRecord.logPath), 'inputs'),
         outputsDir: path.join(path.dirname(artifactRecord.logPath), 'outputs'),
         agentStateSummaryPath: path.join(path.dirname(artifactRecord.logPath), 'agent-state-summary.json'),

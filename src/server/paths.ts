@@ -31,6 +31,7 @@ export function buildJobPaths(config: RuntimeConfig, jobId: string): JobPaths {
       finalResponsePath: path.join(outputsDir, 'final-response.json'),
       schemaPath: path.join(inputsDir, 'result-schema.json'),
       promptPath: path.join(inputsDir, 'prompt.txt'),
+      brokerEnvPath: path.join(inputsDir, 'broker-env.json'),
       specBundlePath: path.join(artifactDir, 'spec'),
       inputsDir,
       outputsDir,

@@ -153,7 +153,8 @@ function buildAgentPrompt(spec: JobSpec, branchName: string): string {
       lines.push('- Use `ar-git-push`, `ar-pr-create`, and `ar-pr-comment` for brokered repo writes.');
     }
     if (spec.capabilityProfile === 'docker-broker') {
-      lines.push('- Use `ar-docker-compose-up`, `ar-docker-compose-down`, `ar-docker-logs`, `ar-docker-exec`, `ar-wp-env-start`, and `ar-wp-env-run` for brokered Docker operations.');
+      lines.push('- Use `ar-docker-compose-up`, `ar-docker-compose-down`, `ar-docker-logs`, `ar-docker-exec`, `ar-wp-env-start`, `ar-wp-env-stop`, `ar-wp-env-run`, and `ar-wp-env-logs` for brokered Docker operations.');
+      lines.push('- `wp-env` is available in docker-broker mode; dangerous mode is not required for normal wp-env workflows.');
       lines.push('- Do not expect raw `docker` daemon access inside the worker.');
     }
   }

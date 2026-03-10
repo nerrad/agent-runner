@@ -30,7 +30,7 @@ This tool is designed for trusted local use only.
 
 - `safe`: no raw repo credentials, no raw host Docker socket, mounted agent state by default
 - `repo-broker`: `safe` plus brokered repo reads and explicit repo write operations
-- `docker-broker`: `repo-broker` plus brokered Docker workflows, including explicit `wp-env` support
+- `docker-broker`: `repo-broker` plus brokered Docker workflows, including explicit `wp-env` support without requiring `dangerous`
 - `dangerous`: raw host Docker socket, ambient repo credentials, and mounted agent state for compatibility
 
 Mounted agent state is a separate control:
@@ -263,6 +263,7 @@ Normalization rules:
 - `safe` requires `--repo-access none`
 - `dangerous` does not allow `--repo-access none`
 - `dangerous` is the compatibility profile that preserves raw host Docker and ambient repo credential passthrough
+- Use `docker-broker` when you need `wp-env` but do not want raw host Docker exposed inside the worker
 
 ## Web UI
 

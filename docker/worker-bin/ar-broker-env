@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+  echo "usage: ar-broker-env <AGENT_RUNNER_* key>" >&2
+  exit 1
+fi
+
+KEY="$1"
+VALUE="${!KEY:-}"
+if [[ -n "$VALUE" ]]; then
+  printf '%s\n' "$VALUE"
+  exit 0
+fi
+
+BROKER_ENV_PATH="${AR_BROKER_ENV_PATH:-/inputs/broker-env.json}"
+if [[ ! -r "$BROKER_ENV_PATH" ]]; then
+  echo "broker environment is not configured for this job" >&2
+  exit 1
+fi
+
+python3 -c '
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+key = sys.argv[2]
+payload = json.loads(path.read_text() or "{}")
+value = payload.get(key, "")
+if not isinstance(value, str) or not value:
+    sys.stderr.write("broker environment is not configured for this job\n")
+    raise SystemExit(1)
+sys.stdout.write(value)
+' "$BROKER_ENV_PATH" "$KEY"

@@ -301,6 +301,11 @@ export class JobManager {
       runtimeEnv.AGENT_RUNNER_BROKER_TOKEN = brokerLease.token;
       runtimeEnv.AGENT_RUNNER_BROKER_URL = this.config.brokerUrl;
       runtimeEnv.AGENT_RUNNER_JOB_ID = record.id;
+      await writeJsonAtomic(record.artifacts.brokerEnvPath ?? path.join(record.artifacts.inputsDir, 'broker-env.json'), {
+        AGENT_RUNNER_BROKER_TOKEN: brokerLease.token,
+        AGENT_RUNNER_BROKER_URL: this.config.brokerUrl,
+        AGENT_RUNNER_JOB_ID: record.id,
+      });
     }
     await this.appendRunnerLogLine(logTarget, 'building worker image and launching agent');
     await this.docker.ensureImageBuilt();
