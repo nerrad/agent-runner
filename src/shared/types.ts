@@ -65,6 +65,7 @@ export type GitHostProfile = z.infer<typeof GitHostProfileSchema>;
 export const ArtifactBundleSchema = z.object({
   logPath: z.string().min(1),
   debugLogPath: z.string().min(1),
+  progressEventsPath: z.string().min(1),
   securityAuditPath: z.string().min(1),
   summaryPath: z.string().min(1),
   testResultsPath: z.string().min(1).optional(),
@@ -73,6 +74,7 @@ export const ArtifactBundleSchema = z.object({
   finalResponsePath: z.string().min(1),
   schemaPath: z.string().min(1),
   promptPath: z.string().min(1),
+  brokerEnvPath: z.string().min(1).optional(),
   specBundlePath: z.string().min(1),
   inputsDir: z.string().min(1),
   outputsDir: z.string().min(1),

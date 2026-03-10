@@ -59,15 +59,28 @@ async function normalizeLegacyJobRecord(raw: unknown): Promise<{ record: unknown
   }
 
   const artifactRecord = artifacts as Record<string, unknown>;
+  const hasDebugLogPath = typeof artifactRecord.debugLogPath === 'string' && artifactRecord.debugLogPath.length > 0;
+  const hasProgressEventsPath = typeof artifactRecord.progressEventsPath === 'string'
+    && artifactRecord.progressEventsPath.length > 0;
+  const hasSecurityAuditPath = typeof artifactRecord.securityAuditPath === 'string'
+    && artifactRecord.securityAuditPath.length > 0;
+  const hasInputsDir = typeof artifactRecord.inputsDir === 'string' && artifactRecord.inputsDir.length > 0;
+  const hasOutputsDir = typeof artifactRecord.outputsDir === 'string' && artifactRecord.outputsDir.length > 0;
+  const hasBrokerEnvPath = typeof artifactRecord.brokerEnvPath === 'string' && artifactRecord.brokerEnvPath.length > 0;
+  const hasAgentStateSummaryPath = typeof artifactRecord.agentStateSummaryPath === 'string'
+    && artifactRecord.agentStateSummaryPath.length > 0;
+  const hasAgentStateDiffPath = typeof artifactRecord.agentStateDiffPath === 'string'
+    && artifactRecord.agentStateDiffPath.length > 0;
+
   if (
-    typeof artifactRecord.debugLogPath === 'string'
-    && artifactRecord.debugLogPath.length > 0
-    && typeof artifactRecord.securityAuditPath === 'string'
-    && artifactRecord.securityAuditPath.length > 0
-    && typeof artifactRecord.inputsDir === 'string'
-    && typeof artifactRecord.outputsDir === 'string'
-    && typeof artifactRecord.agentStateSummaryPath === 'string'
-    && typeof artifactRecord.agentStateDiffPath === 'string'
+    hasDebugLogPath
+    && hasProgressEventsPath
+    && hasSecurityAuditPath
+    && hasInputsDir
+    && hasOutputsDir
+    && hasBrokerEnvPath
+    && hasAgentStateSummaryPath
+    && hasAgentStateDiffPath
   ) {
     return { record: raw, changed: false };
   }
@@ -83,7 +96,12 @@ async function normalizeLegacyJobRecord(raw: unknown): Promise<{ record: unknown
       artifacts: {
         ...artifactRecord,
         securityAuditPath: path.join(path.dirname(artifactRecord.logPath), 'security-audit.jsonl'),
-        debugLogPath: path.join(path.dirname(artifactRecord.logPath), 'outputs', 'debug.log'),
+        debugLogPath: hasDebugLogPath
+          ? preserveLegacyPath(artifactRecord.debugLogPath as string, path.join(path.dirname(artifactRecord.logPath), 'outputs', 'debug.log'))
+          : path.join(path.dirname(artifactRecord.logPath), 'outputs', 'debug.log'),
+        progressEventsPath: hasProgressEventsPath
+          ? preserveLegacyPath(artifactRecord.progressEventsPath as string, path.join(path.dirname(artifactRecord.logPath), 'outputs', 'progress.ndjson'))
+          : path.join(path.dirname(artifactRecord.logPath), 'outputs', 'progress.ndjson'),
         finalResponsePath: typeof artifactRecord.finalResponsePath === 'string'
           ? preserveLegacyPath(
             artifactRecord.finalResponsePath,
@@ -102,6 +120,12 @@ async function normalizeLegacyJobRecord(raw: unknown): Promise<{ record: unknown
             path.join(path.dirname(artifactRecord.logPath), 'inputs', path.basename(artifactRecord.promptPath)),
           )
           : path.join(path.dirname(artifactRecord.logPath), 'inputs', 'prompt.txt'),
+        brokerEnvPath: hasBrokerEnvPath
+          ? preserveLegacyPath(
+            artifactRecord.brokerEnvPath as string,
+            path.join(path.dirname(artifactRecord.logPath), 'inputs', 'broker-env.json'),
+          )
+          : path.join(path.dirname(artifactRecord.logPath), 'inputs', 'broker-env.json'),
         inputsDir: path.join(path.dirname(artifactRecord.logPath), 'inputs'),
         outputsDir: path.join(path.dirname(artifactRecord.logPath), 'outputs'),
         agentStateSummaryPath: path.join(path.dirname(artifactRecord.logPath), 'agent-state-summary.json'),

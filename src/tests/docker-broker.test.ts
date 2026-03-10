@@ -301,3 +301,46 @@ test('docker broker accepts repo-local compose bind mounts when workspace resolv
     () => broker.compose(record, 'up', [ '-f', 'docker-compose.smoke.yml', '--detach', 'smoke' ]),
   );
 });
+
+test('docker broker runs wp-env commands without requiring dangerous mode', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-docker-broker-wp-env-'));
+  const config = createRuntimeConfig(root);
+  const record = createJobRecord(root);
+  await mkdir(record.workspacePath, { recursive: true });
+  await writeFile(path.join(record.workspacePath, '.wp-env.json'), '{ "core": null }\n', 'utf8');
+
+  const calls: Array<{ command: string; args: string[]; env?: NodeJS.ProcessEnv; cwd?: string }> = [];
+  const broker = new DockerBroker(config, async (command, args, options = {}) => {
+    calls.push({ command, args, env: options.env, cwd: options.cwd });
+
+    if (command === 'npx') {
+      return { stdout: 'wp-env ok\n', stderr: '', exitCode: 0 };
+    }
+
+    if (command === 'docker' && args[0] === 'ps') {
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }
+
+    if (command === 'docker' && (args[0] === 'network' || args[0] === 'volume')) {
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }
+
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  const start = await broker.wpEnv(record, 'start', [ '--xdebug' ]);
+  const logs = await broker.wpEnv(record, 'logs', [ '--watch' ]);
+  const stop = await broker.wpEnv(record, 'stop', []);
+
+  assert.equal(start.stdout, 'wp-env ok\n');
+  assert.equal(logs.stdout, 'wp-env ok\n');
+  assert.equal(stop.stdout, 'wp-env ok\n');
+
+  const wpEnvCalls = calls.filter((call) => call.command === 'npx');
+  assert.equal(wpEnvCalls.length, 3);
+  assert.deepEqual(wpEnvCalls[0]?.args, [ '@wordpress/env', 'start', '--xdebug' ]);
+  assert.deepEqual(wpEnvCalls[1]?.args, [ '@wordpress/env', 'logs', '--watch' ]);
+  assert.deepEqual(wpEnvCalls[2]?.args, [ '@wordpress/env', 'stop' ]);
+  assert.ok(wpEnvCalls.every((call) => call.cwd === record.workspacePath));
+  assert.ok(wpEnvCalls.every((call) => call.env?.WP_ENV_HOME === path.join(config.appDir, 'wp-env', record.id)));
+});

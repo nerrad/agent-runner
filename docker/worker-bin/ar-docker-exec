@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+JOB_ID="$(ar-broker-env AGENT_RUNNER_JOB_ID)"
 SERVICE="${1:-}"
 shift || true
 COMMAND="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@")"
 PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"service": sys.argv[1], "command": json.loads(sys.argv[2])}))' "$SERVICE" "$COMMAND")"
-ar-broker-request "/broker/jobs/${AGENT_RUNNER_JOB_ID}/docker/compose-exec" "$PAYLOAD"
+ar-broker-request "/broker/jobs/${JOB_ID}/docker/compose-exec" "$PAYLOAD"

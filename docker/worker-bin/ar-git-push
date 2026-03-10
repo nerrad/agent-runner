@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+JOB_ID="$(ar-broker-env AGENT_RUNNER_JOB_ID)"
 REMOTE="${1:-origin}"
 BRANCH="${2:-}"
 PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"remote": sys.argv[1], "branch": sys.argv[2] or None}))' "$REMOTE" "$BRANCH")"
-ar-broker-request "/broker/jobs/${AGENT_RUNNER_JOB_ID}/repo/push" "$PAYLOAD"
+ar-broker-request "/broker/jobs/${JOB_ID}/repo/push" "$PAYLOAD"

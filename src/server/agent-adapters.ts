@@ -132,10 +132,12 @@ function buildAgentPrompt(spec: JobSpec, branchName: string): string {
     '- Your final response must be JSON matching the required schema only.',
     '',
     'Progress reporting:',
-    '- Emit one short plain-text line before each major task or task switch, prefixed with [progress].',
-    '- Emit one short [progress] line before long-running commands, tests, or builds.',
-    '- Emit a brief [progress] heartbeat before likely long silent stretches.',
-    '- Keep every [progress] update single-line and terse.',
+    '- Prefer the explicit helper command: ar-emit progress "<message>".',
+    '- Use ar-emit progress before each major task or task switch.',
+    '- Use ar-emit progress before long-running commands, tests, or builds.',
+    '- Use a brief ar-emit progress heartbeat before likely long silent stretches.',
+    '- Keep every progress update single-line and terse.',
+    '- Plain stdout lines prefixed with [progress] are still accepted for compatibility, but ar-emit progress is the preferred path.',
     '',
     'Blocker rule:',
     '- Use status "blocked" only for missing credentials, missing external access, missing required files, or irreducible ambiguity.',
@@ -151,7 +153,8 @@ function buildAgentPrompt(spec: JobSpec, branchName: string): string {
       lines.push('- Use `ar-git-push`, `ar-pr-create`, and `ar-pr-comment` for brokered repo writes.');
     }
     if (spec.capabilityProfile === 'docker-broker') {
-      lines.push('- Use `ar-docker-compose-up`, `ar-docker-compose-down`, `ar-docker-logs`, `ar-docker-exec`, `ar-wp-env-start`, and `ar-wp-env-run` for brokered Docker operations.');
+      lines.push('- Use `ar-docker-compose-up`, `ar-docker-compose-down`, `ar-docker-logs`, `ar-docker-exec`, `ar-wp-env-start`, `ar-wp-env-stop`, `ar-wp-env-run`, and `ar-wp-env-logs` for brokered Docker operations.');
+      lines.push('- `wp-env` is available in docker-broker mode; dangerous mode is not required for normal wp-env workflows.');
       lines.push('- Do not expect raw `docker` daemon access inside the worker.');
     }
   }

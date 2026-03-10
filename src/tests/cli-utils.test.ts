@@ -170,6 +170,7 @@ test('formatJobSummary includes blocker reasons when present', () => {
     artifacts: {
       logPath: '/tmp/log',
       debugLogPath: '/tmp/outputs/debug.log',
+      progressEventsPath: '/tmp/outputs/progress.ndjson',
       securityAuditPath: '/tmp/security-audit.jsonl',
       summaryPath: '/tmp/summary.json',
       gitDiffPath: '/tmp/git.diff',

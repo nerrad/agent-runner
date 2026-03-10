@@ -53,6 +53,7 @@ const jobRecord: JobRecord = {
     logPath: '/tmp/agent-runner/artifacts/job-123/run.log',
     debugLogPath: '/tmp/agent-runner/artifacts/job-123/outputs/debug.log',
     securityAuditPath: '/tmp/agent-runner/artifacts/job-123/security-audit.jsonl',
+    progressEventsPath: '/tmp/agent-runner/artifacts/job-123/outputs/progress.ndjson',
     summaryPath: '/tmp/agent-runner/artifacts/job-123/summary.json',
     gitDiffPath: '/tmp/agent-runner/artifacts/job-123/git.diff',
     agentTranscriptPath: '/tmp/agent-runner/artifacts/job-123/agent-transcript.log',
@@ -83,6 +84,7 @@ test('docker runner mounts local claude/codex state into the worker home', async
 
   const commandString = args.join(' ');
   assert.match(commandString, /--user 501:20/);
+  assert.match(commandString, /--group-add 0/);
   assert.match(commandString, /src=\/home\/tester\/\.claude,dst=\/home\/agent-runner\/\.claude/);
   assert.match(commandString, /src=\/home\/tester\/\.claude\.json,dst=\/home\/agent-runner\/\.claude\.json/);
   assert.match(commandString, /src=\/home\/tester\/\.codex,dst=\/home\/agent-runner\/\.codex/);

@@ -31,7 +31,7 @@ function createRuntimeConfig(root: string): RuntimeConfig {
   };
 }
 
-test('job store backfills debugLogPath for legacy persisted jobs', async () => {
+test('job store backfills sidecar artifact paths for legacy persisted jobs', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-job-store-'));
   const config = createRuntimeConfig(root);
   const store = new JobStore(config);
@@ -76,8 +76,12 @@ test('job store backfills debugLogPath for legacy persisted jobs', async () => {
   assert.equal(record.artifacts.debugLogPath, '/tmp/agent-runner/artifacts/legacy-job/outputs/debug.log');
   assert.equal(record.artifacts.inputsDir, '/tmp/agent-runner/artifacts/legacy-job/inputs');
   assert.equal(record.artifacts.outputsDir, '/tmp/agent-runner/artifacts/legacy-job/outputs');
+  assert.equal(record.artifacts.progressEventsPath, '/tmp/agent-runner/artifacts/legacy-job/outputs/progress.ndjson');
+  assert.equal(record.artifacts.brokerEnvPath, '/tmp/agent-runner/artifacts/legacy-job/inputs/broker-env.json');
 
   const records = await store.list();
   assert.equal(records.length, 1);
   assert.equal(records[0]?.artifacts.debugLogPath, '/tmp/agent-runner/artifacts/legacy-job/outputs/debug.log');
+  assert.equal(records[0]?.artifacts.progressEventsPath, '/tmp/agent-runner/artifacts/legacy-job/outputs/progress.ndjson');
+  assert.equal(records[0]?.artifacts.brokerEnvPath, '/tmp/agent-runner/artifacts/legacy-job/inputs/broker-env.json');
 });
