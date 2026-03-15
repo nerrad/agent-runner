@@ -56,7 +56,8 @@ const RUNTIME_AUTH_POLICIES: Record<AgentRuntime, RuntimeAuthPolicy> = {
 
 export class AgentAdapters {
   async prepare(job: JobRecord): Promise<PreparedAgentRun> {
-    const prompt = buildAgentPrompt(job.spec, job.branchName);
+    const branchExplicit = Boolean(job.spec.branch);
+    const prompt = buildAgentPrompt(job.spec, job.branchName, branchExplicit);
     const schemaJson = JSON.stringify({
       type: 'object',
       additionalProperties: false,
@@ -111,7 +112,7 @@ export class AgentAdapters {
   }
 }
 
-function buildAgentPrompt(spec: JobSpec, branchName: string): string {
+function buildAgentPrompt(spec: JobSpec, branchName: string, branchExplicit: boolean): string {
   const lines = [
     'You are running inside agent-runner, an externally sandboxed autonomous worker.',
     `Repository root: /workspace`,
@@ -164,6 +165,22 @@ function buildAgentPrompt(spec: JobSpec, branchName: string): string {
     lines.push('- Any changes to mounted agent state are audited after the run, but the audit is forensic rather than preventive.');
   } else {
     lines.push('', 'Mounted agent state:', '- Mounted agent state is disabled for stronger isolation.');
+  }
+
+  if (!branchExplicit) {
+    lines.push(
+      '',
+      'Branch naming:',
+      '- Before pushing, rename the working branch.',
+      '- Check the repo for branch naming conventions (CLAUDE.md, CONTRIBUTING.md, .github/CONTRIBUTING.md).',
+      '- If conventions are found, follow them.',
+      '- Otherwise, rename to: agent-runner/{brief-slug} where the slug is at most 20 lowercase-hyphenated characters summarizing the work.',
+    );
+    if (spec.capabilityProfile === 'dangerous') {
+      lines.push('- Use `git branch -m <new-name>` to rename.');
+    } else if (spec.repoAccessMode === 'broker') {
+      lines.push('- Use `ar-branch-rename <new-name>` to rename.');
+    }
   }
 
   return lines.join('\n');

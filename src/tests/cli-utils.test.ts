@@ -63,6 +63,7 @@ test('parseCliArgs handles run and installer commands', () => {
     effort: 'high',
     host: 'github.example.com',
     ref: undefined,
+    branch: undefined,
     detach: true,
     profile: 'safe',
     repoAccess: 'none',
@@ -76,6 +77,57 @@ test('parseCliArgs handles run and installer commands', () => {
     claudeOnly: true,
     codexOnly: false,
   });
+});
+
+test('parseCliArgs parses --branch flag', () => {
+  const run = parseCliArgs([
+    'run',
+    '--repo', '/tmp/repo',
+    '--spec', 'agent-os/specs/example',
+    '--runtime', 'claude',
+    '--branch', 'feature/my-branch',
+  ]);
+
+  assert.deepEqual(run, {
+    command: 'run',
+    repo: '/tmp/repo',
+    spec: 'agent-os/specs/example',
+    runtime: 'claude',
+    model: undefined,
+    effort: 'auto',
+    host: 'github.com',
+    ref: undefined,
+    branch: 'feature/my-branch',
+    detach: false,
+    profile: 'safe',
+    repoAccess: 'none',
+    agentState: 'mounted',
+  });
+});
+
+test('normalizeRunSpec flows branch through to jobSpec', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-cli-branch-'));
+  const specRoot = path.join(root, 'specs');
+  await mkdir(specRoot, { recursive: true });
+  const planPath = path.join(specRoot, 'plan.md');
+  await writeFile(planPath, '# Plan\n', 'utf8');
+  const config = createRuntimeConfig(root);
+
+  const normalized = await normalizeRunSpec({
+    command: 'run',
+    repo: 'git@github.com:owner/repo.git',
+    spec: planPath,
+    runtime: 'claude',
+    effort: 'auto',
+    host: 'github.com',
+    branch: 'my-custom-branch',
+    detach: false,
+    profile: 'safe',
+    repoAccess: 'none',
+    agentState: 'mounted',
+  }, config);
+
+  assert.equal(normalized.jobSpec.branch, 'my-custom-branch');
 });
 
 test('normalizeRunSpec converts a local repo path into a remote url and repo-relative spec path', async () => {

@@ -96,6 +96,34 @@ test('repo broker allows fetch from configured remotes and blocks unknown remote
   );
 });
 
+test('repo broker renameBranch succeeds for non-default branches', async () => {
+  const calls: Array<string[]> = [];
+  const broker = new RepoBroker(async (_command, args) => {
+    calls.push(args);
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  await broker.renameBranch(createJobRecord(), 'feature/new-name');
+  assert.ok(calls[0]);
+  assert.deepEqual(calls[0]?.slice(-3), [ 'branch', '-m', 'feature/new-name' ]);
+});
+
+test('repo broker renameBranch rejects renaming to default branch', async () => {
+  const broker = new RepoBroker(async () => ({ stdout: '', stderr: '', exitCode: 0 }));
+  await assert.rejects(
+    () => broker.renameBranch(createJobRecord(), 'main'),
+    /default branch/,
+  );
+});
+
+test('repo broker renameBranch rejects empty branch name', async () => {
+  const broker = new RepoBroker(async () => ({ stdout: '', stderr: '', exitCode: 0 }));
+  await assert.rejects(
+    () => broker.renameBranch(createJobRecord(), ''),
+    /Missing new branch name/,
+  );
+});
+
 test('repo broker limits writes to origin non-default branches', async () => {
   const calls: Array<string[]> = [];
   const broker = new RepoBroker(async (_command, args) => {

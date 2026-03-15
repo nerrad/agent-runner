@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+JOB_ID="$(ar-broker-env AGENT_RUNNER_JOB_ID)"
+BRANCH_NAME="${1:-}"
+if [[ -z "$BRANCH_NAME" ]]; then
+  echo "usage: ar-branch-rename <new-branch-name>" >&2
+  exit 1
+fi
+PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"branchName": sys.argv[1]}))' "$BRANCH_NAME")"
+ar-broker-request "/broker/jobs/${JOB_ID}/repo/rename-branch" "$PAYLOAD"

@@ -108,6 +108,35 @@ test('prepare claude run can enable debug logging through env', async () => {
   }
 });
 
+test('prompt includes branch naming instructions when no explicit branch is given', async () => {
+  const adapters = new AgentAdapters();
+  const job = await createJobRecord('claude', { capabilityProfile: 'repo-broker', repoAccessMode: 'broker' });
+  const prepared = await adapters.prepare(job);
+
+  assert.match(prepared.prompt, /Branch naming:/);
+  assert.match(prepared.prompt, /ar-branch-rename/);
+  assert.doesNotMatch(prepared.prompt, /git branch -m/);
+});
+
+test('prompt excludes branch naming instructions when explicit branch is given', async () => {
+  const adapters = new AgentAdapters();
+  const job = await createJobRecord('claude', { capabilityProfile: 'repo-broker', repoAccessMode: 'broker' });
+  (job.spec as Record<string, unknown>).branch = 'my-explicit-branch';
+  const prepared = await adapters.prepare(job);
+
+  assert.doesNotMatch(prepared.prompt, /Branch naming:/);
+});
+
+test('prompt uses git branch -m instruction for dangerous mode without explicit branch', async () => {
+  const adapters = new AgentAdapters();
+  const job = await createJobRecord('claude', { capabilityProfile: 'dangerous', repoAccessMode: 'ambient' });
+  const prepared = await adapters.prepare(job);
+
+  assert.match(prepared.prompt, /Branch naming:/);
+  assert.match(prepared.prompt, /git branch -m/);
+  assert.doesNotMatch(prepared.prompt, /ar-branch-rename/);
+});
+
 test('runtime auth policies expose helper commands and auth-loop signatures', () => {
   const adapters = new AgentAdapters();
   const claude = adapters.runtimeAuthPolicy('claude');

@@ -33,6 +33,7 @@ export type JobStatus = z.infer<typeof JobStatusSchema>;
 export const JobSpecSchema = z.object({
   repoUrl: z.string().min(1),
   ref: z.string().min(1).optional(),
+  branch: z.string().min(1).optional(),
   specPath: z.string().min(1),
   agentRuntime: AgentRuntimeSchema,
   model: z.string().min(1).optional(),
@@ -118,6 +119,7 @@ export const JobSummaryArtifactSchema = z.object({
   summary: z.string().nullable().optional(),
   blockerReason: z.string().nullable().optional(),
   branchName: z.string().min(1),
+  branchSource: z.enum(['explicit', 'convention', 'auto']).optional(),
   changedFiles: z.array(z.string()),
   headSha: z.string().optional(),
   finishedAt: z.string().min(1),

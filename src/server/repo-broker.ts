@@ -75,6 +75,14 @@ export class RepoBroker {
     return await this.execute('git', [ '-C', record.workspacePath, 'push', 'origin', `${branchName}:${branchName}` ]);
   }
 
+  async renameBranch(record: JobRecord, newBranchName: string): Promise<CommandResult> {
+    if (!newBranchName.trim()) {
+      throw new Error('Missing new branch name');
+    }
+    assertWritableBranch(record, newBranchName);
+    return await this.execute('git', [ '-C', record.workspacePath, 'branch', '-m', newBranchName ]);
+  }
+
   async openPr(
     record: JobRecord,
     options: { title: string; body?: string; base?: string; head?: string },
