@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { JobRecord } from '../shared/types.js';
-import { RepoBroker } from '../server/repo-broker.js';
+import { RepoBroker, isValidBranchName } from '../server/repo-broker.js';
 
 function createJobRecord(): JobRecord {
   return {
@@ -121,6 +121,43 @@ test('repo broker renameBranch rejects empty branch name', async () => {
   await assert.rejects(
     () => broker.renameBranch(createJobRecord(), ''),
     /Missing new branch name/,
+  );
+});
+
+test('isValidBranchName accepts valid names', () => {
+  assert.ok(isValidBranchName('feature/my-branch'));
+  assert.ok(isValidBranchName('agent-runner/fix-login'));
+  assert.ok(isValidBranchName('v1.0.0'));
+  assert.ok(isValidBranchName('feature/nested/path'));
+});
+
+test('isValidBranchName rejects invalid names', () => {
+  assert.equal(isValidBranchName(''), false);
+  assert.equal(isValidBranchName('-flag-like'), false);
+  assert.equal(isValidBranchName('has..double-dot'), false);
+  assert.equal(isValidBranchName('has:colon'), false);
+  assert.equal(isValidBranchName('has~tilde'), false);
+  assert.equal(isValidBranchName('has^caret'), false);
+  assert.equal(isValidBranchName('has space'), false);
+  assert.equal(isValidBranchName('has\\backslash'), false);
+  assert.equal(isValidBranchName('ends.lock'), false);
+  assert.equal(isValidBranchName('ends/'), false);
+  assert.equal(isValidBranchName('ends.'), false);
+});
+
+test('repo broker renameBranch rejects invalid branch names', async () => {
+  const broker = new RepoBroker(async () => ({ stdout: '', stderr: '', exitCode: 0 }));
+  await assert.rejects(
+    () => broker.renameBranch(createJobRecord(), '-flag-like'),
+    /Invalid branch name/,
+  );
+  await assert.rejects(
+    () => broker.renameBranch(createJobRecord(), 'has:colon'),
+    /Invalid branch name/,
+  );
+  await assert.rejects(
+    () => broker.renameBranch(createJobRecord(), 'has..dots'),
+    /Invalid branch name/,
   );
 });
 

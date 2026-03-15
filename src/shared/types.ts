@@ -33,7 +33,7 @@ export type JobStatus = z.infer<typeof JobStatusSchema>;
 export const JobSpecSchema = z.object({
   repoUrl: z.string().min(1),
   ref: z.string().min(1).optional(),
-  branch: z.string().min(1).optional(),
+  branch: z.string().min(1).regex(/^[a-zA-Z0-9][a-zA-Z0-9._\/-]*$/, 'Invalid branch name').optional(),
   specPath: z.string().min(1),
   agentRuntime: AgentRuntimeSchema,
   model: z.string().min(1).optional(),

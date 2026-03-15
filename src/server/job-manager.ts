@@ -16,6 +16,7 @@ import { launchDetachedJobRunner } from './job-launcher.js';
 import { buildJobPaths } from './paths.js';
 import { AgentAdapters } from './agent-adapters.js';
 import { runCommand } from './process-utils.js';
+import { isValidBranchName } from './repo-broker.js';
 import type { SecurityAuditLogger } from './security-audit-log.js';
 import { stageSpecBundle } from './spec-resolver.js';
 import { JobStore } from './job-store.js';
@@ -400,7 +401,7 @@ export class JobManager {
     }
 
     const actualBranch = await this.git.getCurrentBranch(record.workspacePath);
-    if (actualBranch !== record.branchName) {
+    if (actualBranch !== record.branchName && isValidBranchName(actualBranch)) {
       record = await this.updateRecord(record, { branchName: actualBranch });
     }
 

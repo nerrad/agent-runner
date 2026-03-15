@@ -228,6 +228,69 @@ test('broker app rename-branch endpoint updates record and returns success', asy
   });
 });
 
+test('broker app rename-branch endpoint does not update record on git failure', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-broker-app-rename-fail-'));
+  const config = createRuntimeConfig(root);
+  const record = createRecord(config);
+  await mkdir(path.dirname(record.artifacts.securityAuditPath), { recursive: true });
+
+  let savedRecord: JobRecord | null = null;
+
+  const runtime: RuntimeContext = {
+    config,
+    events: {
+      emitRecord() {},
+    } as RuntimeContext['events'],
+    store: {
+      async save(r: JobRecord) {
+        savedRecord = r;
+      },
+    } as RuntimeContext['store'],
+    git: {} as RuntimeContext['git'],
+    docker: {} as RuntimeContext['docker'],
+    adapters: {} as RuntimeContext['adapters'],
+    agentStateAuditor: {} as RuntimeContext['agentStateAuditor'],
+    brokerLeaseStore: {
+      async validate() {
+        return {
+          jobId: record.id,
+          token: 'valid-token',
+          repoUrl: record.spec.repoUrl,
+          profile: record.spec.capabilityProfile,
+          branchName: record.branchName,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        };
+      },
+    } as RuntimeContext['brokerLeaseStore'],
+    repoBroker: {
+      async renameBranch() {
+        return { stdout: '', stderr: 'error: refname is ambiguous', exitCode: 128 };
+      },
+    } as RuntimeContext['repoBroker'],
+    dockerBroker: {} as RuntimeContext['dockerBroker'],
+    securityAuditLogger: new SecurityAuditLogger(),
+    manager: {
+      async getJob(jobId: string) {
+        return jobId === record.id ? record : null;
+      },
+    } as RuntimeContext['manager'],
+  };
+
+  await withServer(runtime, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/broker/jobs/${record.id}/repo/rename-branch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: 'valid-token',
+        branchName: 'feature/renamed',
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.equal(savedRecord, null);
+  });
+});
+
 test('broker app exposes wp-env commands for docker-broker jobs', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-broker-app-wp-env-'));
   const config = createRuntimeConfig(root);

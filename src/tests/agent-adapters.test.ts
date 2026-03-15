@@ -137,6 +137,16 @@ test('prompt uses git branch -m instruction for dangerous mode without explicit 
   assert.doesNotMatch(prepared.prompt, /ar-branch-rename/);
 });
 
+test('prompt uses git branch -m instruction for safe mode without explicit branch', async () => {
+  const adapters = new AgentAdapters();
+  const job = await createJobRecord('claude', { capabilityProfile: 'safe', repoAccessMode: 'none' });
+  const prepared = await adapters.prepare(job);
+
+  assert.match(prepared.prompt, /Branch naming:/);
+  assert.match(prepared.prompt, /git branch -m/);
+  assert.doesNotMatch(prepared.prompt, /ar-branch-rename/);
+});
+
 test('runtime auth policies expose helper commands and auth-loop signatures', () => {
   const adapters = new AgentAdapters();
   const claude = adapters.runtimeAuthPolicy('claude');
