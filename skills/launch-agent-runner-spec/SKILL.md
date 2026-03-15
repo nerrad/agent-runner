@@ -26,10 +26,37 @@ Rules:
 - Prefer a local repo path when the current working directory is already the target repository.
 - Follow logs by default. Use `--detach` only when the user explicitly asks for detached execution.
 
-Command pattern:
+## Before launching — ask the user
+
+If not already specified, ask the user which **capability profile** to use:
+
+| Profile | Network | Push | Use when |
+|---------|---------|------|----------|
+| `safe` (default) | None | No | Code-only changes, no external deps needed |
+| `repo-broker` | Git push/pull via broker | Yes | Agent needs to push a branch or create a PR |
+| `docker-broker` | Git + Docker via broker | Yes | Agent needs to build/test in Docker |
+| `dangerous` | Full ambient access | Yes | Agent needs arbitrary network (rare) |
+
+The profile determines whether the agent can push its branch to the remote. With `safe`, you must extract changes manually from the workspace after completion. With `repo-broker` or higher, the agent can push and the branch will exist on the remote.
+
+Pass the profile with `--profile <name>`.
+
+## Spec path rules
+
+Absolute `--spec` paths **must** be inside `~/.agent-runner/specs/`. If the spec file is elsewhere (e.g. a Claude plan file in `~/.claude/plans/`), copy it first:
 
 ```bash
-agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--host <github-host>] [--ref <ref>] [--detach]
+mkdir -p ~/.agent-runner/specs/<slug>
+cp /path/to/plan.md ~/.agent-runner/specs/<slug>/plan.md
+# For Agent OS spec dirs, copy the whole directory
+```
+
+Relative `--spec` paths are resolved relative to `--repo` root.
+
+## Launch command
+
+```bash
+agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--profile <safe|repo-broker|docker-broker|dangerous>] [--host <github-host>] [--ref <ref>] [--detach]
 ```
 
 Behavior notes:
@@ -38,3 +65,65 @@ Behavior notes:
 - Agent OS spec directories are staged into `/spec`, preserving companion-file layout.
 - Single-file specs are staged only as `/spec/plan.md`; sibling files are not copied automatically.
 - The worker always starts from `/spec/plan.md` and can consult companion spec files selectively.
+
+## After job completion
+
+When the job completes, the output includes the **job ID** (a UUID). Use it to inspect results.
+
+### Key artifacts
+
+All artifacts live at `~/.agent-runner/artifacts/<job-id>/`:
+
+| Artifact | Path | Use |
+|----------|------|-----|
+| Summary | `summary.json` | Status, changed files list, branch name, blocker reason |
+| Diff | `git.diff` | Unified diff of all changes made |
+| Final response | `outputs/final-response.json` | Agent's structured output |
+| Transcript | `agent-transcript.log` | Full agent stdout/stderr |
+| Progress | `outputs/progress.ndjson` | Timestamped progress events |
+
+**Read the summary first** to understand what happened:
+```bash
+cat ~/.agent-runner/artifacts/<job-id>/summary.json | python3 -m json.tool
+```
+
+**Read the diff** to see exact code changes:
+```bash
+cat ~/.agent-runner/artifacts/<job-id>/git.diff
+```
+
+### CLI commands for inspection
+
+```bash
+agent-runner show <job-id>    # Job metadata + debug command
+agent-runner logs <job-id>    # Execution log (progress markers)
+agent-runner list             # All jobs with status summaries
+```
+
+### Workspace and changes
+
+The agent's full working copy is preserved at:
+```
+~/.agent-runner/workspaces/<job-id>/repo/
+```
+
+This is a real git checkout with all changes committed (or staged). To apply changes to your local repo:
+
+```bash
+# Option 1: Apply the diff directly
+cd /path/to/your/repo
+git apply ~/.agent-runner/artifacts/<job-id>/git.diff
+
+# Option 2: Cherry-pick from the workspace
+cd ~/.agent-runner/workspaces/<job-id>/repo
+git log --oneline -5  # find the commit(s)
+cd /path/to/your/repo
+git fetch ~/.agent-runner/workspaces/<job-id>/repo <branch>
+git cherry-pick <sha>
+```
+
+### Profile and push behavior
+
+- **`safe` profile** (default): No network access during execution. Changes exist only in the local workspace — nothing is pushed to the remote. You must extract changes manually (see above).
+- **`repo-broker`/`docker-broker`**: The agent can push via the broker. Check `summary.json` → `branchName` for the remote branch.
+- The branch name is always `agent-runner/<job-id>`.
