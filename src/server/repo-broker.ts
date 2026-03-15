@@ -75,6 +75,14 @@ export class RepoBroker {
     return await this.execute('git', [ '-C', record.workspacePath, 'push', 'origin', `${branchName}:${branchName}` ]);
   }
 
+  async renameBranch(record: JobRecord, newBranchName: string): Promise<CommandResult> {
+    if (!newBranchName.trim()) {
+      throw new Error('Missing new branch name');
+    }
+    assertWritableBranch(record, newBranchName);
+    return await this.execute('git', [ '-C', record.workspacePath, 'branch', '-m', newBranchName ]);
+  }
+
   async openPr(
     record: JobRecord,
     options: { title: string; body?: string; base?: string; head?: string },
@@ -237,9 +245,28 @@ async function validateFetchTarget(execute: CommandRunner, record: JobRecord, ta
   }
 }
 
+const VALID_BRANCH_NAME = /^[a-zA-Z0-9][a-zA-Z0-9._\/-]*$/;
+
+export function isValidBranchName(name: string): boolean {
+  if (!name || !VALID_BRANCH_NAME.test(name)) {
+    return false;
+  }
+  if (name.includes('..') || name.includes('~') || name.includes('^') || name.includes(':') || name.includes('\\') || name.includes(' ')) {
+    return false;
+  }
+  if (name.endsWith('.lock') || name.endsWith('/') || name.endsWith('.')) {
+    return false;
+  }
+  return true;
+}
+
 function assertWritableBranch(record: JobRecord, branchName: string): void {
   if (!branchName.trim()) {
     throw new Error('Missing branch name');
+  }
+
+  if (!isValidBranchName(branchName)) {
+    throw new Error(`Invalid branch name: ${branchName}`);
   }
 
   if (!record.defaultBranch) {

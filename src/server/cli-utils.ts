@@ -15,6 +15,7 @@ export type CliCommand =
     effort: AgentEffort;
     host: GitHubHost;
     ref?: string;
+    branch?: string;
     detach: boolean;
     profile: JobSpec['capabilityProfile'];
     repoAccess: JobSpec['repoAccessMode'];
@@ -95,6 +96,7 @@ function parseRunArgs(args: string[]): CliCommand {
   let effort: AgentEffort = 'auto';
   let host: GitHubHost = 'github.com';
   let ref: string | undefined;
+  let branch: string | undefined;
   let detach = false;
   let profile: JobSpec['capabilityProfile'] = 'safe';
   let repoAccess: JobSpec['repoAccessMode'] = 'none';
@@ -124,6 +126,9 @@ function parseRunArgs(args: string[]): CliCommand {
       case '--ref':
         ref = requireOptionValue(args, ++index, '--ref');
         break;
+      case '--branch':
+        branch = requireOptionValue(args, ++index, '--branch');
+        break;
       case '--detach':
         detach = true;
         break;
@@ -142,7 +147,7 @@ function parseRunArgs(args: string[]): CliCommand {
   }
 
   if (!repo || !spec) {
-    throw new Error('Usage: agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--host <host>] [--ref <ref>] [--profile <safe|repo-broker|docker-broker|dangerous>] [--repo-access <none|broker|ambient>] [--agent-state <mounted|none>] [--detach]');
+    throw new Error('Usage: agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--host <host>] [--ref <ref>] [--branch <name>] [--profile <safe|repo-broker|docker-broker|dangerous>] [--repo-access <none|broker|ambient>] [--agent-state <mounted|none>] [--detach]');
   }
 
   return {
@@ -154,6 +159,7 @@ function parseRunArgs(args: string[]): CliCommand {
     effort,
     host,
     ref,
+    branch,
     detach,
     profile,
     repoAccess,
@@ -227,6 +233,7 @@ export async function normalizeRunSpec(
       jobSpec: {
         repoUrl: command.repo,
         ref: command.ref,
+        branch: command.branch,
         specPath,
         agentRuntime: command.runtime,
         model: command.model,
@@ -252,6 +259,7 @@ export async function normalizeRunSpec(
     jobSpec: {
       repoUrl,
       ref,
+      branch: command.branch,
       specPath: toStoredSpecPath(requestedSpec, repoRoot),
       agentRuntime: command.runtime,
       model: command.model,
@@ -394,7 +402,7 @@ export function helpText(): string {
   return [
     'agent-runner commands:',
     '  agent-runner init',
-    '  agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--host <github-host>] [--ref <ref>] [--profile <safe|repo-broker|docker-broker|dangerous>] [--repo-access <none|broker|ambient>] [--agent-state <mounted|none>] [--detach]',
+    '  agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--host <github-host>] [--ref <ref>] [--branch <name>] [--profile <safe|repo-broker|docker-broker|dangerous>] [--repo-access <none|broker|ambient>] [--agent-state <mounted|none>] [--detach]',
     '  agent-runner list',
     '  agent-runner show <job-id>',
     '  agent-runner logs <job-id> [--follow] [--debug]',

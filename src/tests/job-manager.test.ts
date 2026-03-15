@@ -26,6 +26,7 @@ class MockGitManager {
   public changedFiles = [ ' M src/index.ts' ];
   public headSha = 'abc123';
   public defaultBranch = 'main';
+  public currentBranch = '';
 
   async cloneRepository(_repoUrl: string, workspacePath: string): Promise<void> {
     await mkdir(workspacePath, { recursive: true });
@@ -35,11 +36,14 @@ class MockGitManager {
     await writeFile(path.join(workspacePath, 'agent-os', 'specs', 'example', 'shape.md'), '# Shape\n', 'utf8');
   }
 
-  async createBranch(): Promise<void> {}
+  async createBranch(_workspacePath: string, branchName: string): Promise<void> {
+    this.currentBranch = branchName;
+  }
   async getDefaultBranch(): Promise<string> { return this.defaultBranch; }
   async getHeadSha(): Promise<string> { return this.headSha; }
   async getChangedFiles(): Promise<string[]> { return this.changedFiles; }
   async commitAll(): Promise<boolean> { return true; }
+  async getCurrentBranch(): Promise<string> { return this.currentBranch; }
 }
 
 class MockDockerRunner {
@@ -335,6 +339,98 @@ test('job manager processes a claude job through completion with direct env auth
   assert.equal(summary.summary, 'done');
   assert.match(transcript, /\[agent-runner\] final structured response/);
   assert.match(transcript, /"summary":"done"/);
+
+  clearAuthEnv();
+});
+
+test('job manager uses explicit branch name from spec when provided', async () => {
+  clearAuthEnv();
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-explicit-branch-'));
+  const docker = new MockDockerRunner();
+  const { manager, store } = createManager(createRuntimeConfig(root), docker);
+
+  const job = await manager.createJob({
+    repoUrl: 'git@github.com:owner/repo.git',
+    specPath: 'agent-os/specs/example',
+    agentRuntime: 'claude',
+    effort: 'auto',
+    githubHost: 'github.com',
+    commitOnStop: true,
+    wpEnvEnabled: true,
+    capabilityProfile: 'dangerous',
+    repoAccessMode: 'ambient',
+    agentStateMode: 'mounted',
+    branch: 'feature/my-branch',
+  });
+
+  assert.equal(job.branchName, 'feature/my-branch');
+
+  const finished = await waitForJob(store, job.id, [ 'completed' ]);
+  assert.equal(finished.branchName, 'feature/my-branch');
+
+  const summary = JSON.parse(await readFile(finished.artifacts.summaryPath, 'utf8')) as { branchSource?: string; branchName?: string };
+  assert.equal(summary.branchSource, 'explicit');
+  assert.equal(summary.branchName, 'feature/my-branch');
+
+  clearAuthEnv();
+});
+
+test('job manager writes branchSource auto when branch matches UUID default', async () => {
+  clearAuthEnv();
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-branch-auto-'));
+  const docker = new MockDockerRunner();
+  const { manager, store } = createManager(createRuntimeConfig(root), docker);
+
+  const job = await createJob(manager, 'claude');
+  const finished = await waitForJob(store, job.id, [ 'completed' ]);
+
+  const summary = JSON.parse(await readFile(finished.artifacts.summaryPath, 'utf8')) as { branchSource?: string };
+  assert.equal(summary.branchSource, 'auto');
+
+  clearAuthEnv();
+});
+
+test('job manager writes branchSource convention when agent renames branch during execution', async () => {
+  clearAuthEnv();
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-branch-convention-'));
+  const docker = new MockDockerRunner();
+  const git = new MockGitManager();
+  const config = createRuntimeConfig(root);
+  const store = new JobStore(config);
+  const events = new JobEvents();
+  const manager = new JobManager(
+    config,
+    store,
+    events,
+    git as never,
+    docker as never,
+    new AgentAdapters(),
+    new AgentStateAuditor(config),
+    new BrokerLeaseStore(config),
+    new DockerBroker(config),
+    new SecurityAuditLogger(),
+    { runMode: 'inline' },
+  );
+
+  // Simulate the agent renaming the branch during execution
+  const originalRunJob = docker.runJob.bind(docker);
+  docker.runJob = async (request: DockerRunRequest) => {
+    git.currentBranch = 'feature/agent-chosen-name';
+    return originalRunJob(request);
+  };
+
+  const job = await createJob(manager, 'claude');
+  const finished = await waitForJob(store, job.id, [ 'completed' ]);
+
+  assert.equal(finished.branchName, 'feature/agent-chosen-name');
+  const summary = JSON.parse(await readFile(finished.artifacts.summaryPath, 'utf8')) as { branchSource?: string };
+  assert.equal(summary.branchSource, 'convention');
 
   clearAuthEnv();
 });

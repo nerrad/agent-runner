@@ -54,6 +54,23 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
     }
   });
 
+  app.post('/broker/jobs/:jobId/repo/rename-branch', async (request, response, next) => {
+    try {
+      const record = await authorizeBrokerJob(runtime, request.params.jobId, request.body.token);
+      const newBranchName = asString(request.body.branchName, 'branchName');
+      const result = await runtime.repoBroker.renameBranch(record, newBranchName);
+      if (result.exitCode === 0) {
+        const updated = { ...record, branchName: newBranchName, updatedAt: new Date().toISOString() };
+        await runtime.store.save(updated);
+        runtime.events.emitRecord(updated);
+      }
+      response.status(result.exitCode === 0 ? 200 : 400).json(result);
+    } catch (error) {
+      await appendSecurityAudit(runtime, request.params.jobId, 'repo-broker', 'rename-branch', request.body, error);
+      next(error);
+    }
+  });
+
   app.post('/broker/jobs/:jobId/repo/push', async (request, response, next) => {
     try {
       const record = await authorizeBrokerJob(runtime, request.params.jobId, request.body.token);

@@ -126,6 +126,7 @@ Prompt contract:
 - consult `/spec/shape.md`, `/spec/standards.md`, `/spec/references.md`, and `/spec/visuals` only when relevant
 - work until complete or hard blocked
 - emit terse single-line best-effort progress updates prefixed with `[progress]` before major task switches, long-running commands, and likely silent stretches
+- when no explicit `--branch` was given, the prompt includes branch naming instructions: check the repo for conventions and rename the working branch before pushing (using `ar-branch-rename` in broker mode or `git branch -m` in dangerous mode)
 - return JSON only, matching the staged schema
 
 Live log behavior:
@@ -242,7 +243,7 @@ Available commands:
 
 ```bash
 agent-runner init
-agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--host <github-host>] [--ref <ref>] [--profile <safe|repo-broker|docker-broker|dangerous>] [--repo-access <none|broker|ambient>] [--agent-state <mounted|none>] [--detach]
+agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--host <github-host>] [--ref <ref>] [--branch <name>] [--profile <safe|repo-broker|docker-broker|dangerous>] [--repo-access <none|broker|ambient>] [--agent-state <mounted|none>] [--detach]
 agent-runner list
 agent-runner show <job-id>
 agent-runner logs <job-id> [--follow] [--debug]
@@ -256,6 +257,8 @@ Normalization rules:
 - If `--repo` is a git URL, `--spec` may be repo-relative or an absolute path under `AGENT_RUNNER_SPEC_ROOT`
 - Local repo path support is only for launch convenience; execution still happens from a fresh clone
 - `--model` is optional and passed through to the selected runtime; if omitted, the runtime falls back to its mounted local config/default model
+- `--branch` is optional; if provided, the working branch is created with that exact name (`branchSource: explicit` in the summary artifact)
+- If `--branch` is omitted, the agent checks the repo for branch naming conventions (CLAUDE.md, CONTRIBUTING.md) and renames accordingly (`branchSource: convention`); if no conventions are found, the branch defaults to `agent-runner/{brief-slug}` (`branchSource: auto`)
 - `--effort` defaults to `auto`; Claude uses its native `--effort` flag and Codex uses a config override in `exec` mode
 - `--agent-state mounted` is the default because it preserves local config/auth/statistics behavior
 - `--agent-state none` disables the `~/.claude`, `~/.claude.json`, and `~/.codex` mounts
@@ -271,6 +274,7 @@ The web form accepts the same job inputs:
 
 - repo URL
 - ref
+- branch (optional — auto-generated if empty)
 - spec path
 - runtime
 - optional model

@@ -15,6 +15,7 @@ Required inputs:
 Optional inputs:
 - model
 - effort
+- branch
 
 Rules:
 - Prefer an Agent OS spec directory such as `agent-os/specs/<slug>/`.
@@ -56,8 +57,10 @@ Relative `--spec` paths are resolved relative to `--repo` root.
 ## Launch command
 
 ```bash
-agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--profile <safe|repo-broker|docker-broker|dangerous>] [--host <github-host>] [--ref <ref>] [--detach]
+agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--branch <name>] [--profile <safe|repo-broker|docker-broker|dangerous>] [--host <github-host>] [--ref <ref>] [--detach]
 ```
+
+If the target repo has branch naming conventions (in CLAUDE.md, CONTRIBUTING.md, etc.), the caller may check for them before launching and pass `--branch` with an appropriate name. If omitted, the agent will check the repo itself and auto-name the branch.
 
 Behavior notes:
 - If `--repo` is a local git checkout, `agent-runner` resolves `remote.origin.url`, uses the current branch by default, and still executes from a fresh clone.
@@ -126,4 +129,10 @@ git cherry-pick <sha>
 
 - **`safe` profile** (default): No network access during execution. Changes exist only in the local workspace — nothing is pushed to the remote. You must extract changes manually (see above).
 - **`repo-broker`/`docker-broker`**: The agent can push via the broker. Check `summary.json` → `branchName` for the remote branch.
-- The branch name is always `agent-runner/<job-id>`.
+
+Branch naming strategies (in priority order):
+1. **Explicit**: Pass `--branch <name>` at launch — the branch is created with that name.
+2. **Repo conventions**: When no explicit branch is given, the agent checks the repo for naming conventions (CLAUDE.md, CONTRIBUTING.md) and renames accordingly.
+3. **Fallback**: `agent-runner/{brief-slug}` where the slug is a ≤20 char summary of the work.
+
+The `summary.json` artifact includes a `branchSource` field (`explicit`, `convention`, or `auto`) indicating which strategy was used.

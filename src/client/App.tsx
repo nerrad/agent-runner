@@ -289,6 +289,7 @@ export function App(): ReactElement {
         ...form,
         model: form.model || undefined,
         ref: form.ref || undefined,
+        branch: form.branch || undefined,
       };
 
       const response = await fetch('/api/jobs', {
@@ -382,6 +383,14 @@ export function App(): ReactElement {
                 value={form.ref ?? ''}
                 onChange={(event) => setForm((current) => ({ ...current, ref: event.target.value }))}
                 placeholder="main"
+              />
+            </label>
+            <label>
+              Branch name (optional)
+              <input
+                value={form.branch ?? ''}
+                onChange={(event) => setForm((current) => ({ ...current, branch: event.target.value }))}
+                placeholder="auto-generated if empty"
               />
             </label>
             <label>

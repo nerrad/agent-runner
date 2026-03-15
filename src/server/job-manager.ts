@@ -16,6 +16,7 @@ import { launchDetachedJobRunner } from './job-launcher.js';
 import { buildJobPaths } from './paths.js';
 import { AgentAdapters } from './agent-adapters.js';
 import { runCommand } from './process-utils.js';
+import { isValidBranchName } from './repo-broker.js';
 import type { SecurityAuditLogger } from './security-audit-log.js';
 import { stageSpecBundle } from './spec-resolver.js';
 import { JobStore } from './job-store.js';
@@ -104,7 +105,7 @@ export class JobManager {
     const id = randomUUID();
     const now = new Date().toISOString();
     const paths = buildJobPaths(this.config, id);
-    const branchName = `agent-runner/${id}`;
+    const branchName = spec.branch ?? `agent-runner/${id}`;
 
     await ensureDir(paths.jobDir);
     await ensureDir(path.dirname(paths.workspacePath));
@@ -399,6 +400,11 @@ export class JobManager {
       committed = await this.git.commitAll(record.workspacePath, `chore(agent-runner): snapshot ${record.id}`);
     }
 
+    const actualBranch = await this.git.getCurrentBranch(record.workspacePath);
+    if (actualBranch !== record.branchName && isValidBranchName(actualBranch)) {
+      record = await this.updateRecord(record, { branchName: actualBranch });
+    }
+
     const headSha = await this.git.getHeadSha(record.workspacePath);
     record = await this.updateRecord(record, {
       headSha,
@@ -458,12 +464,15 @@ export class JobManager {
         'utf8',
       );
     }
+    const branchSource = record.spec.branch ? 'explicit'
+      : (record.branchName !== `agent-runner/${record.id}` ? 'convention' : 'auto');
     await writeJsonAtomic(record.artifacts.summaryPath, {
       id: record.id,
       status: agentResult?.status ?? record.status,
       summary: agentResult?.summary,
       blockerReason: agentResult?.blockerReason,
       branchName: record.branchName,
+      branchSource,
       changedFiles,
       headSha: record.headSha,
       finishedAt: new Date().toISOString(),
