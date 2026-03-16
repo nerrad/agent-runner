@@ -46,6 +46,19 @@ export class RepoBroker {
     return env ? { env } : {};
   }
 
+  /** Build env for gh CLI commands: proxy + GH_REPO + GH_HOST (for enterprise hosts). */
+  private ghEnv(record: JobRecord): NodeJS.ProcessEnv {
+    const env = this.proxyEnv(record);
+    const result: NodeJS.ProcessEnv = {
+      ...(env ?? process.env),
+      GH_REPO: repoSlugFromUrl(record.spec.repoUrl),
+    };
+    if (record.spec.githubHost !== 'github.com') {
+      result.GH_HOST = record.spec.githubHost;
+    }
+    return result;
+  }
+
   async runGitRead(record: JobRecord, args: string[]): Promise<CommandResult> {
     await validateGitReadArgs(this.execute, record, args);
     return await this.execute('git', [ '-C', record.workspacePath, ...args ], this.proxyOpts(record));
@@ -53,13 +66,9 @@ export class RepoBroker {
 
   async runGhRead(record: JobRecord, args: string[]): Promise<CommandResult> {
     validateGhReadArgs(args);
-    const env = this.proxyEnv(record);
     return await this.execute('gh', [ ...args ], {
       cwd: record.workspacePath,
-      env: {
-        ...(env ?? process.env),
-        GH_REPO: repoSlugFromUrl(record.spec.repoUrl),
-      },
+      env: this.ghEnv(record),
     });
   }
 
@@ -114,13 +123,9 @@ export class RepoBroker {
     if (options.base) {
       args.push('--base', options.base);
     }
-    const env = this.proxyEnv(record);
     return await this.execute('gh', args, {
       cwd: record.workspacePath,
-      env: {
-        ...(env ?? process.env),
-        GH_REPO: repoSlugFromUrl(record.spec.repoUrl),
-      },
+      env: this.ghEnv(record),
     });
   }
 
@@ -131,13 +136,9 @@ export class RepoBroker {
     if (!options.pr.trim() || !options.body.trim()) {
       throw new Error('Missing PR comment arguments');
     }
-    const env = this.proxyEnv(record);
     return await this.execute('gh', [ 'pr', 'comment', options.pr, '--body', options.body ], {
       cwd: record.workspacePath,
-      env: {
-        ...(env ?? process.env),
-        GH_REPO: repoSlugFromUrl(record.spec.repoUrl),
-      },
+      env: this.ghEnv(record),
     });
   }
 }
