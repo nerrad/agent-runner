@@ -1,4 +1,5 @@
-import { appendFile, writeFile } from 'node:fs/promises';
+import { appendFile, writeFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { JobRecord } from '../shared/types.js';
 import { ensureDir } from './fs-utils.js';
 import { runCommand } from './process-utils.js';
@@ -100,6 +101,15 @@ export class GitManager {
     if (changedFiles.length === 0) {
       return false;
     }
+
+    const excludePatterns = [
+      '.pnpm-store',
+      '.yarn/cache',
+      '.npm/_cacache',
+    ];
+    const infoDir = join(workspacePath, '.git', 'info');
+    await mkdir(infoDir, { recursive: true });
+    await writeFile(join(infoDir, 'exclude'), excludePatterns.join('\n') + '\n', 'utf8');
 
     const addResult = await runCommand('git', [ '-C', workspacePath, 'add', '-A' ]);
     if (addResult.exitCode !== 0) {

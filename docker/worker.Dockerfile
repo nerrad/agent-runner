@@ -23,6 +23,8 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 RUN corepack enable && corepack prepare pnpm@10.30.1 --activate
+ENV PNPM_HOME="/root/.local/share/pnpm"
+RUN pnpm config set store-dir /root/.local/share/pnpm/store --global
 RUN npm install -g @anthropic-ai/claude-code @openai/codex
 COPY docker/worker-bin/ /usr/local/bin/
 RUN chmod +x /usr/local/bin/ar-*
