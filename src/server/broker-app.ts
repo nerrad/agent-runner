@@ -56,7 +56,7 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
 
   app.post('/broker/jobs/:jobId/repo/rename-branch', async (request, response, next) => {
     try {
-      const record = await authorizeBrokerJob(runtime, request.params.jobId, request.body.token);
+      const record = await authorizeBrokerJobForRename(runtime, request.params.jobId, request.body.token);
       const newBranchName = asString(request.body.branchName, 'branchName');
       const result = await runtime.repoBroker.renameBranch(record, newBranchName);
       if (result.exitCode === 0) {
@@ -194,11 +194,16 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
   return app;
 }
 
-async function authorizeBrokerJob(runtime: RuntimeContext, jobId: string, token: unknown) {
+async function authorizeRequest(
+  runtime: RuntimeContext,
+  jobId: string,
+  token: unknown,
+  validateToken: (jobId: string, token: string) => Promise<unknown>,
+) {
   if (typeof token !== 'string' || !token.trim()) {
     throw new Error('Missing broker token');
   }
-  await runtime.brokerLeaseStore.validate(jobId, token);
+  await validateToken(jobId, token);
   const record = await runtime.manager.getJob(jobId);
   if (!record) {
     throw new Error('Job not found');
@@ -206,10 +211,19 @@ async function authorizeBrokerJob(runtime: RuntimeContext, jobId: string, token:
   if ([ 'blocked', 'completed', 'failed', 'canceled' ].includes(record.status)) {
     throw new Error(`Broker access is not available after job ${record.status}`);
   }
+  return record;
+}
+
+async function authorizeBrokerJob(runtime: RuntimeContext, jobId: string, token: unknown) {
+  const record = await authorizeRequest(runtime, jobId, token, (id, t) => runtime.brokerLeaseStore.validate(id, t));
   if (record.spec.capabilityProfile !== 'repo-broker' && record.spec.capabilityProfile !== 'docker-broker') {
     throw new Error('Broker access is not enabled for this job');
   }
   return record;
+}
+
+async function authorizeBrokerJobForRename(runtime: RuntimeContext, jobId: string, token: unknown) {
+  return await authorizeRequest(runtime, jobId, token, (id, t) => runtime.brokerLeaseStore.validateRename(id, t));
 }
 
 async function authorizeDockerBrokerJob(runtime: RuntimeContext, jobId: string, token: unknown) {

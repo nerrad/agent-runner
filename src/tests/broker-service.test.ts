@@ -127,15 +127,19 @@ test('runWithBrokerService scopes broker lifetime to brokered internal runs', as
   assert.equal(await isBrokerReachable(brokerPort), false);
 });
 
-test('runWithBrokerService skips broker startup for non-brokered jobs', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-broker-skip-'));
+test('runWithBrokerService starts broker for safe-profile jobs', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-broker-safe-'));
   const brokerPort = await reservePort();
   const config = createRuntimeConfig(root, brokerPort);
   const runtime = createRuntime(config, createRecord(config, 'safe'));
 
+  let reachableDuringTask = false;
   await runWithBrokerService(runtime, 'job-123', async () => {
-    assert.equal(await isBrokerReachable(brokerPort), false);
+    reachableDuringTask = await isBrokerReachable(brokerPort);
   });
+
+  assert.equal(reachableDuringTask, true);
+  assert.equal(await isBrokerReachable(brokerPort), false);
 });
 
 async function reservePort(): Promise<number> {

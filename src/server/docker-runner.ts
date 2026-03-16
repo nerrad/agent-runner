@@ -133,22 +133,22 @@ export class DockerRunner {
     const env = { ...request.env };
     const { capabilityProfile } = request.job.spec;
 
-    if (capabilityProfile === 'repo-broker' || capabilityProfile === 'docker-broker') {
-      env.AGENT_RUNNER_JOB_ID ??= request.job.id;
-      env.AGENT_RUNNER_BROKER_URL ??= this.config.brokerUrl;
+    env.AGENT_RUNNER_JOB_ID ??= request.job.id;
+    env.AGENT_RUNNER_BROKER_URL ??= this.config.brokerUrl;
 
-      if (!env.AGENT_RUNNER_BROKER_TOKEN) {
-        try {
-          const leasePath = path.join(this.config.jobsDir, request.job.id, 'broker-lease.json');
-          const raw = await readFile(leasePath, 'utf8');
-          const lease = JSON.parse(raw) as { token?: string };
-          if (lease.token) {
-            env.AGENT_RUNNER_BROKER_TOKEN = lease.token;
-          }
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-            throw error;
-          }
+    if (!env.AGENT_RUNNER_BROKER_TOKEN) {
+      try {
+        const leasePath = path.join(this.config.jobsDir, request.job.id, 'broker-lease.json');
+        const raw = await readFile(leasePath, 'utf8');
+        const lease = JSON.parse(raw) as { token?: string; renameToken?: string };
+        const isBrokerProfile = capabilityProfile === 'repo-broker' || capabilityProfile === 'docker-broker';
+        const tokenValue = isBrokerProfile ? lease.token : lease.renameToken;
+        if (tokenValue) {
+          env.AGENT_RUNNER_BROKER_TOKEN = tokenValue;
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw error;
         }
       }
     }

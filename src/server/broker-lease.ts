@@ -8,6 +8,7 @@ import { writeJsonAtomic } from './fs-utils.js';
 export interface BrokerLease {
   jobId: string;
   token: string;
+  renameToken: string;
   repoUrl: string;
   profile: JobRecord['spec']['capabilityProfile'];
   branchName: string;
@@ -18,9 +19,12 @@ export class BrokerLeaseStore {
   constructor(private readonly config: RuntimeConfig) {}
 
   async issue(record: JobRecord): Promise<BrokerLease> {
+    const token = crypto.randomUUID();
+    const isBrokerProfile = record.spec.capabilityProfile === 'repo-broker' || record.spec.capabilityProfile === 'docker-broker';
     const lease: BrokerLease = {
       jobId: record.id,
-      token: crypto.randomUUID(),
+      token,
+      renameToken: isBrokerProfile ? token : crypto.randomUUID(),
       repoUrl: record.spec.repoUrl,
       profile: record.spec.capabilityProfile,
       branchName: record.branchName,
@@ -45,6 +49,17 @@ export class BrokerLeaseStore {
   async validate(jobId: string, token: string): Promise<BrokerLease> {
     const lease = await this.get(jobId);
     if (!lease || !tokensEqual(lease.token, token)) {
+      throw new Error('Invalid broker lease');
+    }
+    if (Date.parse(lease.expiresAt) < Date.now()) {
+      throw new Error('Expired broker lease');
+    }
+    return lease;
+  }
+
+  async validateRename(jobId: string, token: string): Promise<BrokerLease> {
+    const lease = await this.get(jobId);
+    if (!lease || !tokensEqual(lease.renameToken, token)) {
       throw new Error('Invalid broker lease');
     }
     if (Date.parse(lease.expiresAt) < Date.now()) {

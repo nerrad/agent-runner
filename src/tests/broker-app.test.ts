@@ -118,6 +118,18 @@ test('broker app writes a security audit entry for blocked broker activity', asy
         return {
           jobId: record.id,
           token: 'valid-token',
+          renameToken: 'valid-token',
+          repoUrl: record.spec.repoUrl,
+          profile: record.spec.capabilityProfile,
+          branchName: record.branchName,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        };
+      },
+      async validateRename() {
+        return {
+          jobId: record.id,
+          token: 'valid-token',
+          renameToken: 'valid-token',
           repoUrl: record.spec.repoUrl,
           profile: record.spec.capabilityProfile,
           branchName: record.branchName,
@@ -189,6 +201,18 @@ test('broker app rename-branch endpoint updates record and returns success', asy
         return {
           jobId: record.id,
           token: 'valid-token',
+          renameToken: 'valid-token',
+          repoUrl: record.spec.repoUrl,
+          profile: record.spec.capabilityProfile,
+          branchName: record.branchName,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        };
+      },
+      async validateRename() {
+        return {
+          jobId: record.id,
+          token: 'valid-token',
+          renameToken: 'valid-token',
           repoUrl: record.spec.repoUrl,
           profile: record.spec.capabilityProfile,
           branchName: record.branchName,
@@ -255,6 +279,18 @@ test('broker app rename-branch endpoint does not update record on git failure', 
         return {
           jobId: record.id,
           token: 'valid-token',
+          renameToken: 'valid-token',
+          repoUrl: record.spec.repoUrl,
+          profile: record.spec.capabilityProfile,
+          branchName: record.branchName,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        };
+      },
+      async validateRename() {
+        return {
+          jobId: record.id,
+          token: 'valid-token',
+          renameToken: 'valid-token',
           repoUrl: record.spec.repoUrl,
           profile: record.spec.capabilityProfile,
           branchName: record.branchName,
@@ -316,6 +352,18 @@ test('broker app exposes wp-env commands for docker-broker jobs', async () => {
         return {
           jobId: record.id,
           token: 'valid-token',
+          renameToken: 'valid-token',
+          repoUrl: record.spec.repoUrl,
+          profile: record.spec.capabilityProfile,
+          branchName: record.branchName,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        };
+      },
+      async validateRename() {
+        return {
+          jobId: record.id,
+          token: 'valid-token',
+          renameToken: 'valid-token',
           repoUrl: record.spec.repoUrl,
           profile: record.spec.capabilityProfile,
           branchName: record.branchName,
@@ -355,5 +403,137 @@ test('broker app exposes wp-env commands for docker-broker jobs', async () => {
     const payload = await response.json() as { stdout: string; exitCode: number };
     assert.equal(payload.exitCode, 0);
     assert.equal(payload.stdout, 'wp-env start --xdebug');
+  });
+});
+
+test('broker app rename-branch endpoint succeeds for safe-profile job with rename token', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-broker-app-safe-rename-'));
+  const config = createRuntimeConfig(root);
+  const record = {
+    ...createRecord(config),
+    spec: {
+      ...createRecord(config).spec,
+      capabilityProfile: 'safe' as const,
+      repoAccessMode: 'none' as const,
+    },
+  };
+  await mkdir(path.dirname(record.artifacts.securityAuditPath), { recursive: true });
+
+  let savedRecord: JobRecord | null = null;
+
+  const runtime: RuntimeContext = {
+    config,
+    events: {
+      emitRecord(r: JobRecord) {
+        savedRecord = r;
+      },
+    } as RuntimeContext['events'],
+    store: {
+      async save(r: JobRecord) {
+        savedRecord = r;
+      },
+    } as RuntimeContext['store'],
+    git: {} as RuntimeContext['git'],
+    docker: {} as RuntimeContext['docker'],
+    adapters: {} as RuntimeContext['adapters'],
+    agentStateAuditor: {} as RuntimeContext['agentStateAuditor'],
+    brokerLeaseStore: {
+      async validate() {
+        throw new Error('Invalid broker lease');
+      },
+      async validateRename() {
+        return {
+          jobId: record.id,
+          token: 'full-token',
+          renameToken: 'rename-only-token',
+          repoUrl: record.spec.repoUrl,
+          profile: record.spec.capabilityProfile,
+          branchName: record.branchName,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        };
+      },
+    } as RuntimeContext['brokerLeaseStore'],
+    repoBroker: {
+      async renameBranch() {
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    } as RuntimeContext['repoBroker'],
+    dockerBroker: {} as RuntimeContext['dockerBroker'],
+    securityAuditLogger: new SecurityAuditLogger(),
+    manager: {
+      async getJob(jobId: string) {
+        return jobId === record.id ? record : null;
+      },
+    } as RuntimeContext['manager'],
+  };
+
+  await withServer(runtime, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/broker/jobs/${record.id}/repo/rename-branch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: 'rename-only-token',
+        branchName: 'feature/safe-renamed',
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.ok(savedRecord);
+    assert.equal((savedRecord as JobRecord).branchName, 'feature/safe-renamed');
+  });
+});
+
+test('broker app git-read endpoint rejects safe-profile job with rename-only token', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-broker-app-safe-gitread-'));
+  const config = createRuntimeConfig(root);
+  const record = {
+    ...createRecord(config),
+    spec: {
+      ...createRecord(config).spec,
+      capabilityProfile: 'safe' as const,
+      repoAccessMode: 'none' as const,
+    },
+  };
+  await mkdir(path.dirname(record.artifacts.securityAuditPath), { recursive: true });
+
+  const runtime: RuntimeContext = {
+    config,
+    events: {} as RuntimeContext['events'],
+    store: {} as RuntimeContext['store'],
+    git: {} as RuntimeContext['git'],
+    docker: {} as RuntimeContext['docker'],
+    adapters: {} as RuntimeContext['adapters'],
+    agentStateAuditor: {} as RuntimeContext['agentStateAuditor'],
+    brokerLeaseStore: {
+      async validate() {
+        throw new Error('Invalid broker lease');
+      },
+      async validateRename() {
+        throw new Error('Invalid broker lease');
+      },
+    } as RuntimeContext['brokerLeaseStore'],
+    repoBroker: {} as RuntimeContext['repoBroker'],
+    dockerBroker: {} as RuntimeContext['dockerBroker'],
+    securityAuditLogger: new SecurityAuditLogger(),
+    manager: {
+      async getJob(jobId: string) {
+        return jobId === record.id ? record : null;
+      },
+    } as RuntimeContext['manager'],
+  };
+
+  await withServer(runtime, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/broker/jobs/${record.id}/repo/git-read`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: 'rename-only-token',
+        args: [ 'status' ],
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    const body = await response.json() as { error: string };
+    assert.match(body.error, /Invalid broker lease/);
   });
 });
