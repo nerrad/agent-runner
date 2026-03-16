@@ -285,6 +285,56 @@ test('repo broker sets HTTPS_PROXY for enterprise host — commentPr', async () 
   assert.equal(capturedEnvs[0]?.HTTPS_PROXY, 'socks5://127.0.0.1:8080');
 });
 
+test('repo broker sets GH_HOST for enterprise host — runGhRead', async () => {
+  const capturedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+  const broker = new RepoBroker(testConfig, async (_command, _args, options = {}) => {
+    capturedEnvs.push(options.env);
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  await broker.runGhRead(createEnterpriseJobRecord(), [ 'repo', 'view' ]);
+  assert.equal(capturedEnvs[0]?.GH_HOST, 'github.a8c.com');
+});
+
+test('repo broker sets GH_HOST for enterprise host — openPr', async () => {
+  const capturedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+  const broker = new RepoBroker(testConfig, async (_command, _args, options = {}) => {
+    capturedEnvs.push(options.env);
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  await broker.openPr(createEnterpriseJobRecord(), { title: 'Test PR' });
+  assert.equal(capturedEnvs[0]?.GH_HOST, 'github.a8c.com');
+});
+
+test('repo broker sets GH_HOST for enterprise host — commentPr', async () => {
+  const capturedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+  const broker = new RepoBroker(testConfig, async (_command, _args, options = {}) => {
+    capturedEnvs.push(options.env);
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  await broker.commentPr(createEnterpriseJobRecord(), { pr: '42', body: 'LGTM' });
+  assert.equal(capturedEnvs[0]?.GH_HOST, 'github.a8c.com');
+});
+
+test('repo broker does not set GH_HOST for github.com hosts', async () => {
+  const capturedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+  const broker = new RepoBroker(testConfig, async (_command, _args, options = {}) => {
+    capturedEnvs.push(options.env);
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  await broker.runGhRead(createJobRecord(), [ 'repo', 'view' ]);
+  assert.equal(capturedEnvs[0]?.GH_HOST, undefined);
+
+  await broker.openPr(createJobRecord(), { title: 'Test PR' });
+  assert.equal(capturedEnvs[1]?.GH_HOST, undefined);
+
+  await broker.commentPr(createJobRecord(), { pr: '42', body: 'LGTM' });
+  assert.equal(capturedEnvs[2]?.GH_HOST, undefined);
+});
+
 test('repo broker does not set HTTPS_PROXY for github.com hosts', async () => {
   const capturedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
   const broker = new RepoBroker(testConfig, async (_command, _args, options = {}) => {
