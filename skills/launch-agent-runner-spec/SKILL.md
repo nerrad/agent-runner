@@ -1,6 +1,6 @@
 ---
 name: launch-agent-runner-spec
-description: Launch agent-runner from an existing Claude or Agent OS spec. Use this when the user already has a plan/spec bundle and wants to run it in agent-runner with Claude Code or Codex. Prefer an Agent OS spec directory with plan.md; allow a single plan file as fallback.
+description: Launch, hand off, or send a spec to agent-runner. Use this when the user wants to run a plan or spec in agent-runner — common phrasings include "hand off to agent-runner", "send to agent-runner", or "run this plan in agent-runner". Prefer an Agent OS spec directory with plan.md; allow a single plan file as fallback.
 ---
 
 # Launch agent-runner from an existing spec
@@ -40,7 +40,7 @@ If not already specified, ask the user which **capability profile** to use:
 
 The profile determines whether the agent can push its branch to the remote. With `safe`, you must extract changes manually from the workspace after completion. With `repo-broker` or higher, the agent can push and the branch will exist on the remote.
 
-Pass the profile with `--profile <name>`.
+Pass the profile with `--profile <name>`. Repo access is auto-derived from the profile. For `dangerous`, also pass `--repo-access broker` or `--repo-access ambient`.
 
 ## Spec path rules
 
@@ -57,7 +57,7 @@ Relative `--spec` paths are resolved relative to `--repo` root.
 ## Launch command
 
 ```bash
-agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--branch <name>] [--profile <safe|repo-broker|docker-broker|dangerous>] [--host <github-host>] [--ref <ref>] [--detach]
+agent-runner run --repo <path-or-url> --spec <path> --runtime <claude|codex> [--model <model>] [--effort <auto|low|medium|high>] [--branch <name>] [--profile <safe|repo-broker|docker-broker|dangerous>] [--repo-access <none|broker|ambient>] [--host <github-host>] [--ref <ref>] [--detach]
 ```
 
 If the target repo has branch naming conventions (in CLAUDE.md, CONTRIBUTING.md, etc.), the caller may check for them before launching and pass `--branch` with an appropriate name. If omitted, the agent will check the repo itself and auto-name the branch.
