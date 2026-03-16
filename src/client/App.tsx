@@ -1,28 +1,12 @@
-import type { FormEvent, ReactElement } from 'react';
+import type { ReactElement } from 'react';
 import { startTransition, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   JobArtifactId,
   JobArtifactPayload,
   JobSummaryArtifact,
   JobRecord,
-  JobSpec,
   JobStatus,
 } from '../shared/types.js';
-
-const INITIAL_FORM: JobSpec = {
-  repoUrl: '',
-  ref: '',
-  specPath: '',
-  agentRuntime: 'claude',
-  model: '',
-  effort: 'auto',
-  githubHost: 'github.com',
-  commitOnStop: true,
-  wpEnvEnabled: true,
-  capabilityProfile: 'safe',
-  repoAccessMode: 'none',
-  agentStateMode: 'mounted',
-};
 
 const VIEWER_TABS = [
   { id: 'run', label: 'run.log' },
@@ -63,8 +47,6 @@ export function App(): ReactElement {
   const [artifactState, setArtifactState] = useState<ArtifactState>(INITIAL_ARTIFACT_STATE);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [showRawFinalResponse, setShowRawFinalResponse] = useState(false);
-  const [form, setForm] = useState(INITIAL_FORM);
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const logContentRef = useRef('');
 
@@ -278,52 +260,10 @@ export function App(): ReactElement {
       const nextJobs = payload as JobRecord[];
       startTransition(() => {
         setJobs(nextJobs);
-        if (!selectedJobId && nextJobs[0]) {
-          setSelectedJobId(nextJobs[0].id);
-        }
+        setSelectedJobId((current) => current ?? nextJobs[0]?.id ?? null);
       });
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : 'Failed to load jobs');
-    }
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    setSubmitting(true);
-    setError(null);
-
-    try {
-      const payload = {
-        ...form,
-        model: form.model || undefined,
-        ref: form.ref || undefined,
-        branch: form.branch || undefined,
-      };
-
-      const response = await fetch('/api/jobs', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        const failure = await response.json() as { error?: string };
-        throw new Error(failure.error ?? 'Failed to create job');
-      }
-
-      const created = await response.json() as JobRecord;
-      startTransition(() => {
-        setForm(INITIAL_FORM);
-        setSelectedJobId(created.id);
-        setViewerTab('run');
-      });
-      await refreshJobs();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Unknown error');
-    } finally {
-      setSubmitting(false);
     }
   }
 
@@ -370,142 +310,11 @@ export function App(): ReactElement {
       </header>
 
       <main className="layout">
-        <section className="panel form-panel">
-          <div className="panel-header">
-            <h2>New Job</h2>
-            <p>Submit a repo and spec path. Agent OS spec directories are preferred; single-file plans still work.</p>
-          </div>
-          <form className="job-form" onSubmit={(event) => void handleSubmit(event)}>
-            <label>
-              Repo URL
-              <input
-                value={form.repoUrl}
-                onChange={(event) => setForm((current) => ({ ...current, repoUrl: event.target.value }))}
-                placeholder="git@github.com:owner/repo.git"
-                required
-              />
-            </label>
-            <label>
-              Ref / base branch
-              <input
-                value={form.ref ?? ''}
-                onChange={(event) => setForm((current) => ({ ...current, ref: event.target.value }))}
-                placeholder="main"
-              />
-            </label>
-            <label>
-              Branch name (optional)
-              <input
-                value={form.branch ?? ''}
-                onChange={(event) => setForm((current) => ({ ...current, branch: event.target.value }))}
-                placeholder="auto-generated if empty"
-              />
-            </label>
-            <label>
-              Spec path
-              <input
-                value={form.specPath}
-                onChange={(event) => setForm((current) => ({ ...current, specPath: event.target.value }))}
-                placeholder="agent-os/specs/feature-x"
-                required
-              />
-            </label>
-            <div className="inline-fields">
-              <label>
-                Agent runtime
-                <select
-                  value={form.agentRuntime}
-                  onChange={(event) => setForm((current) => ({ ...current, agentRuntime: event.target.value as JobSpec['agentRuntime'] }))}
-                >
-                  <option value="claude">Claude Code</option>
-                  <option value="codex">Codex</option>
-                </select>
-              </label>
-              <label>
-                Model
-                <input
-                  value={form.model ?? ''}
-                  onChange={(event) => setForm((current) => ({ ...current, model: event.target.value }))}
-                  placeholder="runtime default"
-                />
-              </label>
-            </div>
-            <div className="inline-fields">
-              <label>
-                Effort
-                <select
-                  value={form.effort}
-                  onChange={(event) => setForm((current) => ({ ...current, effort: event.target.value as JobSpec['effort'] }))}
-                >
-                  <option value="auto">Auto</option>
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                </select>
-              </label>
-              <label>
-                GitHub host
-                <input
-                  value={form.githubHost}
-                  onChange={(event) => setForm((current) => ({ ...current, githubHost: event.target.value as JobSpec['githubHost'] }))}
-                  placeholder="github.com"
-                />
-              </label>
-            </div>
-            <div className="inline-fields">
-              <label>
-                Access profile
-                <select
-                  value={form.capabilityProfile}
-                  onChange={(event) => setForm((current) => ({ ...current, capabilityProfile: event.target.value as JobSpec['capabilityProfile'] }))}
-                >
-                  <option value="safe">safe</option>
-                  <option value="repo-broker">repo-broker</option>
-                  <option value="docker-broker">docker-broker</option>
-                  <option value="dangerous">dangerous</option>
-                </select>
-              </label>
-              <label>
-                Agent state
-                <select
-                  value={form.agentStateMode}
-                  onChange={(event) => setForm((current) => ({ ...current, agentStateMode: event.target.value as JobSpec['agentStateMode'] }))}
-                >
-                  <option value="mounted">mounted</option>
-                  <option value="none">none</option>
-                </select>
-              </label>
-            </div>
-            <div className="inline-fields">
-              <label>
-                Repo access
-                <select
-                  value={form.repoAccessMode}
-                  onChange={(event) => setForm((current) => ({ ...current, repoAccessMode: event.target.value as JobSpec['repoAccessMode'] }))}
-                >
-                  <option value="none">none</option>
-                  <option value="broker">broker</option>
-                  <option value="ambient">ambient</option>
-                </select>
-              </label>
-            </div>
-            {form.capabilityProfile === 'dangerous' ? (
-              <p className="error-line">Dangerous mode exposes ambient repo credentials and raw host Docker access.</p>
-            ) : null}
-            {form.agentStateMode === 'mounted' ? (
-              <p className="error-line">Mounted agent state preserves local config, auth, instructions, telemetry, and cost/accounting state. It is mounted read-write and audited after the run, but the audit is forensic rather than preventive.</p>
-            ) : null}
-            {error ? <p className="error-line">{error}</p> : null}
-            <button className="primary-button" type="submit" disabled={submitting}>
-              {submitting ? 'Creating...' : 'Create Job'}
-            </button>
-          </form>
-        </section>
-
         <section className="panel jobs-panel">
           <div className="panel-header">
             <h2>Jobs</h2>
             <p>One active job at a time. New jobs queue automatically.</p>
+            {error ? <p className="error-line">{error}</p> : null}
           </div>
           <div className="jobs-scroll">
             <div className="jobs-list">
