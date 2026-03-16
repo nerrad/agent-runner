@@ -1,4 +1,4 @@
-import { appendFile, writeFile, mkdir } from 'node:fs/promises';
+import { appendFile, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { JobRecord } from '../shared/types.js';
 import { ensureDir } from './fs-utils.js';
@@ -102,14 +102,7 @@ export class GitManager {
       return false;
     }
 
-    const excludePatterns = [
-      '.pnpm-store',
-      '.yarn/cache',
-      '.npm/_cacache',
-    ];
-    const infoDir = join(workspacePath, '.git', 'info');
-    await mkdir(infoDir, { recursive: true });
-    await writeFile(join(infoDir, 'exclude'), excludePatterns.join('\n') + '\n', 'utf8');
+    await this.ensureExcludePatterns(workspacePath);
 
     const addResult = await runCommand('git', [ '-C', workspacePath, 'add', '-A' ]);
     if (addResult.exitCode !== 0) {
@@ -122,6 +115,41 @@ export class GitManager {
     }
 
     return true;
+  }
+
+  private excludeWritten = false;
+
+  private static readonly EXCLUDE_PATTERNS = [
+    '.pnpm-store',
+    '.yarn/cache',
+    '.npm/_cacache',
+  ];
+
+  private async ensureExcludePatterns(workspacePath: string): Promise<void> {
+    if (this.excludeWritten) {
+      return;
+    }
+
+    const infoDir = join(workspacePath, '.git', 'info');
+    await mkdir(infoDir, { recursive: true });
+
+    const excludePath = join(infoDir, 'exclude');
+    let existing = '';
+    try {
+      existing = await readFile(excludePath, 'utf8');
+    } catch {
+      // File doesn't exist yet — that's fine
+    }
+
+    const existingLines = new Set(existing.split('\n').map((l) => l.trim()));
+    const missing = GitManager.EXCLUDE_PATTERNS.filter((p) => !existingLines.has(p));
+
+    if (missing.length > 0) {
+      const suffix = (existing && !existing.endsWith('\n') ? '\n' : '') + missing.join('\n') + '\n';
+      await appendFile(excludePath, suffix, 'utf8');
+    }
+
+    this.excludeWritten = true;
   }
 
   async writeDiff(workspacePath: string, targetPath: string): Promise<void> {
