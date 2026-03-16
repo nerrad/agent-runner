@@ -1,4 +1,6 @@
 import type { JobRecord } from '../shared/types.js';
+import type { RuntimeConfig } from './config.js';
+import { buildHostGitEnv } from './config.js';
 import { runCommand, type CommandResult } from './process-utils.js';
 
 const ALLOWED_GIT_READ_COMMANDS = new Set([
@@ -30,19 +32,32 @@ type CommandRunner = (
 ) => Promise<CommandResult>;
 
 export class RepoBroker {
-  constructor(private readonly execute: CommandRunner = runCommand) {}
+  constructor(
+    private readonly config: RuntimeConfig,
+    private readonly execute: CommandRunner = runCommand,
+  ) {}
+
+  private proxyEnv(record: JobRecord): NodeJS.ProcessEnv | undefined {
+    return buildHostGitEnv(this.config, record.spec.githubHost);
+  }
+
+  private proxyOpts(record: JobRecord): { env?: NodeJS.ProcessEnv } {
+    const env = this.proxyEnv(record);
+    return env ? { env } : {};
+  }
 
   async runGitRead(record: JobRecord, args: string[]): Promise<CommandResult> {
     await validateGitReadArgs(this.execute, record, args);
-    return await this.execute('git', [ '-C', record.workspacePath, ...args ]);
+    return await this.execute('git', [ '-C', record.workspacePath, ...args ], this.proxyOpts(record));
   }
 
   async runGhRead(record: JobRecord, args: string[]): Promise<CommandResult> {
     validateGhReadArgs(args);
+    const env = this.proxyEnv(record);
     return await this.execute('gh', [ ...args ], {
       cwd: record.workspacePath,
       env: {
-        ...process.env,
+        ...(env ?? process.env),
         GH_REPO: repoSlugFromUrl(record.spec.repoUrl),
       },
     });
@@ -50,7 +65,7 @@ export class RepoBroker {
 
   async fetch(record: JobRecord, remote = 'origin'): Promise<CommandResult> {
     await validateFetchTarget(this.execute, record, remote);
-    return await this.execute('git', [ '-C', record.workspacePath, 'fetch', remote ]);
+    return await this.execute('git', [ '-C', record.workspacePath, 'fetch', remote ], this.proxyOpts(record));
   }
 
   async createBranch(record: JobRecord, branchName: string): Promise<CommandResult> {
@@ -72,7 +87,7 @@ export class RepoBroker {
 
     const branchName = options.branch ?? record.branchName;
     assertWritableBranch(record, branchName);
-    return await this.execute('git', [ '-C', record.workspacePath, 'push', 'origin', `${branchName}:${branchName}` ]);
+    return await this.execute('git', [ '-C', record.workspacePath, 'push', 'origin', `${branchName}:${branchName}` ], this.proxyOpts(record));
   }
 
   async renameBranch(record: JobRecord, newBranchName: string): Promise<CommandResult> {
@@ -99,10 +114,11 @@ export class RepoBroker {
     if (options.base) {
       args.push('--base', options.base);
     }
+    const env = this.proxyEnv(record);
     return await this.execute('gh', args, {
       cwd: record.workspacePath,
       env: {
-        ...process.env,
+        ...(env ?? process.env),
         GH_REPO: repoSlugFromUrl(record.spec.repoUrl),
       },
     });
@@ -115,10 +131,11 @@ export class RepoBroker {
     if (!options.pr.trim() || !options.body.trim()) {
       throw new Error('Missing PR comment arguments');
     }
+    const env = this.proxyEnv(record);
     return await this.execute('gh', [ 'pr', 'comment', options.pr, '--body', options.body ], {
       cwd: record.workspacePath,
       env: {
-        ...process.env,
+        ...(env ?? process.env),
         GH_REPO: repoSlugFromUrl(record.spec.repoUrl),
       },
     });

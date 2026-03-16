@@ -28,7 +28,11 @@ class MockGitManager {
   public defaultBranch = 'main';
   public currentBranch = '';
 
-  async cloneRepository(_repoUrl: string, workspacePath: string): Promise<void> {
+  public lastCloneEnv: NodeJS.ProcessEnv | undefined = undefined;
+  public lastDefaultBranchEnv: NodeJS.ProcessEnv | undefined = undefined;
+
+  async cloneRepository(_repoUrl: string, workspacePath: string, options?: { ref?: string; env?: NodeJS.ProcessEnv }): Promise<void> {
+    this.lastCloneEnv = options?.env;
     await mkdir(workspacePath, { recursive: true });
     await writeFile(path.join(workspacePath, '.gitkeep'), '', 'utf8');
     await mkdir(path.join(workspacePath, 'agent-os', 'specs', 'example'), { recursive: true });
@@ -39,7 +43,10 @@ class MockGitManager {
   async createBranch(_workspacePath: string, branchName: string): Promise<void> {
     this.currentBranch = branchName;
   }
-  async getDefaultBranch(): Promise<string> { return this.defaultBranch; }
+  async getDefaultBranch(_targetPath?: string, options?: { env?: NodeJS.ProcessEnv }): Promise<string> {
+    this.lastDefaultBranchEnv = options?.env;
+    return this.defaultBranch;
+  }
   async getHeadSha(): Promise<string> { return this.headSha; }
   async getChangedFiles(): Promise<string[]> { return this.changedFiles; }
   async commitAll(): Promise<boolean> { return true; }
@@ -685,6 +692,87 @@ test('idle heartbeat is scheduled from the last agent output, not the start of t
 
   assert.match(log, /initial output/);
   assert.match(log, /\[agent-runner\] still running; waiting for agent output/);
+
+  clearAuthEnv();
+});
+
+test('job manager forwards proxy env to git clone and getDefaultBranch for enterprise hosts', async () => {
+  clearAuthEnv();
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-proxy-forward-'));
+  const docker = new MockDockerRunner();
+  const git = new MockGitManager();
+  const config = createRuntimeConfig(root);
+  const store = new JobStore(config);
+  const events = new JobEvents();
+  const manager = new JobManager(
+    config,
+    store,
+    events,
+    git as never,
+    docker as never,
+    new AgentAdapters(),
+    new AgentStateAuditor(config),
+    new BrokerLeaseStore(config),
+    new DockerBroker(config),
+    new SecurityAuditLogger(),
+    { runMode: 'inline' },
+  );
+
+  const job = await manager.createJob({
+    repoUrl: 'git@github.a8c.com:owner/repo.git',
+    specPath: 'agent-os/specs/example',
+    agentRuntime: 'claude',
+    effort: 'auto',
+    githubHost: 'github.a8c.com',
+    commitOnStop: true,
+    wpEnvEnabled: true,
+    capabilityProfile: 'dangerous',
+    repoAccessMode: 'ambient',
+    agentStateMode: 'mounted',
+  });
+
+  await waitForJob(store, job.id, [ 'completed' ]);
+
+  assert.ok(git.lastCloneEnv, 'cloneRepository should receive proxy env');
+  assert.equal(git.lastCloneEnv.HTTPS_PROXY, 'socks5://127.0.0.1:8080');
+
+  assert.ok(git.lastDefaultBranchEnv, 'getDefaultBranch should receive proxy env');
+  assert.equal(git.lastDefaultBranchEnv.HTTPS_PROXY, 'socks5://127.0.0.1:8080');
+
+  clearAuthEnv();
+});
+
+test('job manager does not pass proxy env for github.com jobs', async () => {
+  clearAuthEnv();
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-no-proxy-'));
+  const docker = new MockDockerRunner();
+  const git = new MockGitManager();
+  const config = createRuntimeConfig(root);
+  const store = new JobStore(config);
+  const events = new JobEvents();
+  const manager = new JobManager(
+    config,
+    store,
+    events,
+    git as never,
+    docker as never,
+    new AgentAdapters(),
+    new AgentStateAuditor(config),
+    new BrokerLeaseStore(config),
+    new DockerBroker(config),
+    new SecurityAuditLogger(),
+    { runMode: 'inline' },
+  );
+
+  const job = await createJob(manager, 'claude');
+  await waitForJob(store, job.id, [ 'completed' ]);
+
+  assert.equal(git.lastCloneEnv, undefined, 'cloneRepository should not receive proxy env for github.com');
+  assert.equal(git.lastDefaultBranchEnv, undefined, 'getDefaultBranch should not receive proxy env for github.com');
 
   clearAuthEnv();
 });

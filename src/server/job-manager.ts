@@ -6,7 +6,7 @@ import { AgentResultSchema, JobSpecSchema } from '../shared/types.js';
 import type { AgentStateAuditor } from './agent-state-audit.js';
 import type { BrokerLeaseStore } from './broker-lease.js';
 import type { RuntimeConfig } from './config.js';
-import { createGitHostProfile } from './config.js';
+import { buildHostGitEnv, createGitHostProfile } from './config.js';
 import type { DockerBroker } from './docker-broker.js';
 import type { DockerRunner } from './docker-runner.js';
 import { ensureDir, safeRemove, writeJsonAtomic } from './fs-utils.js';
@@ -253,6 +253,8 @@ export class JobManager {
       runtimeEnv.HTTPS_PROXY = profile.proxyUrl;
     }
 
+    const hostProxyEnv = buildHostGitEnv(this.config, record.spec.githubHost);
+
     await writeFile(record.artifacts.logPath, '', 'utf8');
     await writeFile(record.artifacts.debugLogPath, '', 'utf8');
     await writeFile(record.artifacts.securityAuditPath, '', 'utf8');
@@ -277,8 +279,8 @@ export class JobManager {
 
     await safeRemove(record.workspacePath);
     await ensureDir(path.dirname(record.workspacePath));
-    await this.git.cloneRepository(record.spec.repoUrl, record.workspacePath, record.spec.ref);
-    const defaultBranch = await this.git.getDefaultBranch(record.workspacePath);
+    await this.git.cloneRepository(record.spec.repoUrl, record.workspacePath, { ref: record.spec.ref, env: hostProxyEnv });
+    const defaultBranch = await this.git.getDefaultBranch(record.workspacePath, { env: hostProxyEnv });
     await this.git.createBranch(record.workspacePath, record.branchName);
     record = await this.updateRecord(record, {
       defaultBranch,

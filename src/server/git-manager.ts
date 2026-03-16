@@ -28,13 +28,14 @@ export class GitManager {
     return result.stdout.trim();
   }
 
-  async getDefaultBranch(targetPath: string): Promise<string | undefined> {
+  async getDefaultBranch(targetPath: string, options?: { env?: NodeJS.ProcessEnv }): Promise<string | undefined> {
+    const envOpts = options?.env ? { env: options.env } : {};
     const symbolicRef = await runCommand('git', [ '-C', targetPath, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD' ]);
     if (symbolicRef.exitCode === 0 && symbolicRef.stdout.trim()) {
       return symbolicRef.stdout.trim().replace(/^origin\//, '');
     }
 
-    const remoteShow = await runCommand('git', [ '-C', targetPath, 'remote', 'show', 'origin' ]);
+    const remoteShow = await runCommand('git', [ '-C', targetPath, 'remote', 'show', 'origin' ], envOpts);
     if (remoteShow.exitCode === 0) {
       const headBranchLine = remoteShow.stdout
         .split('\n')
@@ -51,18 +52,19 @@ export class GitManager {
     return undefined;
   }
 
-  async cloneRepository(repoUrl: string, workspacePath: string, ref?: string): Promise<void> {
+  async cloneRepository(repoUrl: string, workspacePath: string, options?: { ref?: string; env?: NodeJS.ProcessEnv }): Promise<void> {
     await ensureDir(workspacePath);
 
-    const parentResult = await runCommand('git', [ 'clone', '--origin', 'origin', repoUrl, workspacePath ]);
+    const envOpts = options?.env ? { env: options.env } : {};
+    const parentResult = await runCommand('git', [ 'clone', '--origin', 'origin', repoUrl, workspacePath ], envOpts);
     if (parentResult.exitCode !== 0) {
       throw new Error(parentResult.stderr || `Failed to clone ${repoUrl}`);
     }
 
-    if (ref) {
-      const checkoutResult = await runCommand('git', [ '-C', workspacePath, 'checkout', ref ]);
+    if (options?.ref) {
+      const checkoutResult = await runCommand('git', [ '-C', workspacePath, 'checkout', options.ref ]);
       if (checkoutResult.exitCode !== 0) {
-        throw new Error(checkoutResult.stderr || `Failed to checkout ${ref}`);
+        throw new Error(checkoutResult.stderr || `Failed to checkout ${options.ref}`);
       }
     }
   }

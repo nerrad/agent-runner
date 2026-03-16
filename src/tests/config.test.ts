@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import type { RuntimeConfig } from '../server/config.js';
-import { createGitHostProfile, loadRuntimeConfig, resolveSourceRoot } from '../server/config.js';
+import { buildHostGitEnv, createGitHostProfile, getHostProxyUrl, loadRuntimeConfig, resolveSourceRoot, toHostProxyUrl } from '../server/config.js';
 import { buildJobPaths } from '../server/paths.js';
 
 const homeDir = '/home/tester';
@@ -39,6 +39,42 @@ test('createGitHostProfile adds proxy only for non-github.com hosts', () => {
 
   assert.equal(enterpriseHost.host, 'github.example.com');
   assert.equal(enterpriseHost.proxyUrl, 'socks5://host.docker.internal:8080');
+});
+
+test('toHostProxyUrl replaces host.docker.internal with 127.0.0.1', () => {
+  assert.equal(toHostProxyUrl('socks5://host.docker.internal:8080'), 'socks5://127.0.0.1:8080');
+  assert.equal(toHostProxyUrl('socks5://127.0.0.1:8080'), 'socks5://127.0.0.1:8080');
+  assert.equal(toHostProxyUrl('http://proxy.corp.example.com:3128'), 'http://proxy.corp.example.com:3128');
+});
+
+test('getHostProxyUrl returns undefined for github.com and when no proxy configured', () => {
+  assert.equal(getHostProxyUrl(runtimeConfig, 'github.com'), undefined);
+  assert.equal(getHostProxyUrl(runtimeConfig, 'github.example.com'), 'socks5://127.0.0.1:8080');
+
+  const noProxyConfig = { ...runtimeConfig, githubProxyUrl: undefined };
+  assert.equal(getHostProxyUrl(noProxyConfig, 'github.example.com'), undefined);
+});
+
+test('buildHostGitEnv returns undefined for github.com (no proxy needed)', () => {
+  assert.equal(buildHostGitEnv(runtimeConfig, 'github.com'), undefined);
+});
+
+test('buildHostGitEnv returns minimal env with HTTPS_PROXY for enterprise hosts', () => {
+  const env = buildHostGitEnv(runtimeConfig, 'github.example.com');
+  assert.ok(env);
+  assert.equal(env.HTTPS_PROXY, 'socks5://127.0.0.1:8080');
+  assert.equal(env.PATH, process.env.PATH);
+  assert.equal(env.HOME, process.env.HOME);
+  // Should NOT contain arbitrary process.env keys like ANTHROPIC_API_KEY
+  const keys = Object.keys(env);
+  assert.ok(keys.includes('PATH'));
+  assert.ok(keys.includes('HTTPS_PROXY'));
+  assert.ok(!keys.includes('ANTHROPIC_API_KEY'));
+});
+
+test('buildHostGitEnv returns undefined when no proxy is configured', () => {
+  const noProxyConfig = { ...runtimeConfig, githubProxyUrl: undefined };
+  assert.equal(buildHostGitEnv(noProxyConfig, 'github.example.com'), undefined);
 });
 
 test('buildJobPaths creates stable artifact layout', () => {
