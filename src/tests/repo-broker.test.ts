@@ -202,31 +202,86 @@ test('repo broker limits writes to origin non-default branches', async () => {
   );
 });
 
-test('repo broker sets HTTPS_PROXY for enterprise github hosts', async () => {
+function createEnterpriseJobRecord(): JobRecord {
+  const base = createJobRecord();
+  return {
+    ...base,
+    spec: {
+      ...base.spec,
+      repoUrl: 'git@github.a8c.com:owner/repo.git',
+      githubHost: 'github.a8c.com',
+    },
+  };
+}
+
+test('repo broker sets HTTPS_PROXY for enterprise host — runGitRead', async () => {
   const capturedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
   const broker = new RepoBroker(testConfig, async (_command, _args, options = {}) => {
     capturedEnvs.push(options.env);
     return { stdout: '', stderr: '', exitCode: 0 };
   });
 
-  const enterpriseRecord = {
-    ...createJobRecord(),
-    spec: {
-      ...createJobRecord().spec,
-      repoUrl: 'git@github.a8c.com:owner/repo.git',
-      githubHost: 'github.a8c.com',
-    },
-  };
-
-  await broker.runGhRead(enterpriseRecord, [ 'repo', 'view' ]);
+  await broker.runGitRead(createEnterpriseJobRecord(), [ 'status' ]);
   assert.equal(capturedEnvs[0]?.HTTPS_PROXY, 'socks5://127.0.0.1:8080');
+});
 
-  capturedEnvs.length = 0;
-  await broker.openPr(enterpriseRecord, { title: 'Test PR' });
+test('repo broker sets HTTPS_PROXY for enterprise host — runGhRead', async () => {
+  const capturedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+  const broker = new RepoBroker(testConfig, async (_command, _args, options = {}) => {
+    capturedEnvs.push(options.env);
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  await broker.runGhRead(createEnterpriseJobRecord(), [ 'repo', 'view' ]);
   assert.equal(capturedEnvs[0]?.HTTPS_PROXY, 'socks5://127.0.0.1:8080');
+});
 
-  capturedEnvs.length = 0;
-  await broker.pushBranch(enterpriseRecord, { branch: 'agent-runner/job-123' });
+test('repo broker sets HTTPS_PROXY for enterprise host — fetch', async () => {
+  const capturedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+  const broker = new RepoBroker(testConfig, async (_command, args, options = {}) => {
+    capturedEnvs.push(options.env);
+    if (args.includes('remote')) {
+      return { stdout: 'origin\n', stderr: '', exitCode: 0 };
+    }
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  await broker.fetch(createEnterpriseJobRecord(), 'origin');
+  const fetchEnv = capturedEnvs.find((env) => env?.HTTPS_PROXY !== undefined);
+  assert.ok(fetchEnv);
+  assert.equal(fetchEnv.HTTPS_PROXY, 'socks5://127.0.0.1:8080');
+});
+
+test('repo broker sets HTTPS_PROXY for enterprise host — openPr', async () => {
+  const capturedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+  const broker = new RepoBroker(testConfig, async (_command, _args, options = {}) => {
+    capturedEnvs.push(options.env);
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  await broker.openPr(createEnterpriseJobRecord(), { title: 'Test PR' });
+  assert.equal(capturedEnvs[0]?.HTTPS_PROXY, 'socks5://127.0.0.1:8080');
+});
+
+test('repo broker sets HTTPS_PROXY for enterprise host — pushBranch', async () => {
+  const capturedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+  const broker = new RepoBroker(testConfig, async (_command, _args, options = {}) => {
+    capturedEnvs.push(options.env);
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  await broker.pushBranch(createEnterpriseJobRecord(), { branch: 'agent-runner/job-123' });
+  assert.equal(capturedEnvs[0]?.HTTPS_PROXY, 'socks5://127.0.0.1:8080');
+});
+
+test('repo broker sets HTTPS_PROXY for enterprise host — commentPr', async () => {
+  const capturedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+  const broker = new RepoBroker(testConfig, async (_command, _args, options = {}) => {
+    capturedEnvs.push(options.env);
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  await broker.commentPr(createEnterpriseJobRecord(), { pr: '42', body: 'LGTM' });
   assert.equal(capturedEnvs[0]?.HTTPS_PROXY, 'socks5://127.0.0.1:8080');
 });
 
@@ -237,6 +292,32 @@ test('repo broker does not set HTTPS_PROXY for github.com hosts', async () => {
     return { stdout: '', stderr: '', exitCode: 0 };
   });
 
-  await broker.runGhRead(createJobRecord(), [ 'repo', 'view' ]);
+  await broker.runGitRead(createJobRecord(), [ 'status' ]);
   assert.equal(capturedEnvs[0]?.HTTPS_PROXY, undefined);
+
+  await broker.runGhRead(createJobRecord(), [ 'repo', 'view' ]);
+  assert.equal(capturedEnvs[1]?.HTTPS_PROXY, undefined);
+});
+
+test('repo broker proxy env does not leak process.env secrets', async () => {
+  const originalKey = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'secret-test-key';
+  try {
+    const capturedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+    const broker = new RepoBroker(testConfig, async (_command, _args, options = {}) => {
+      capturedEnvs.push(options.env);
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+
+    await broker.runGitRead(createEnterpriseJobRecord(), [ 'status' ]);
+    assert.ok(capturedEnvs[0]);
+    assert.equal(capturedEnvs[0].ANTHROPIC_API_KEY, undefined);
+    assert.equal(capturedEnvs[0].HTTPS_PROXY, 'socks5://127.0.0.1:8080');
+  } finally {
+    if (originalKey !== undefined) {
+      process.env.ANTHROPIC_API_KEY = originalKey;
+    } else {
+      delete process.env.ANTHROPIC_API_KEY;
+    }
+  }
 });

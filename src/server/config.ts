@@ -2,6 +2,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { GitHostProfile, GitHubHost } from '../shared/types.js';
+
+const VALID_PROXY_SCHEMES = /^(socks5?|https?):\/\//;
 import { loadProjectEnv } from './env-file.js';
 import { ensureDir, pathExists } from './fs-utils.js';
 
@@ -62,7 +64,7 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
     hostUid: typeof process.getuid === 'function' ? process.getuid() : undefined,
     hostGid: typeof process.getgid === 'function' ? process.getgid() : undefined,
     sshAuthSock: process.env.SSH_AUTH_SOCK,
-    githubProxyUrl: process.env.AGENT_RUNNER_GITHUB_PROXY_URL,
+    githubProxyUrl: validateProxyUrl(process.env.AGENT_RUNNER_GITHUB_PROXY_URL),
     workerImageTag: process.env.AGENT_RUNNER_IMAGE ?? 'agent-runner-worker:latest',
     sourceRoot,
     brokerPort: Number.parseInt(process.env.AGENT_RUNNER_BROKER_PORT ?? '4318', 10),
@@ -99,14 +101,42 @@ export async function resolveSourceRoot(moduleUrl: string): Promise<string> {
 }
 
 export function toHostProxyUrl(proxyUrl: string): string {
-  return proxyUrl.replace('host.docker.internal', '127.0.0.1');
+  return proxyUrl.replaceAll('host.docker.internal', '127.0.0.1');
 }
 
-export function getHostProxyUrl(config: RuntimeConfig, githubHost: string): string | undefined {
+export function getHostProxyUrl(config: RuntimeConfig, githubHost: GitHubHost): string | undefined {
   if (githubHost === 'github.com' || !config.githubProxyUrl) {
     return undefined;
   }
   return toHostProxyUrl(config.githubProxyUrl);
+}
+
+function validateProxyUrl(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  if (!VALID_PROXY_SCHEMES.test(value)) {
+    throw new Error(`Invalid AGENT_RUNNER_GITHUB_PROXY_URL: must start with socks5://, socks4://, http://, or https:// (got ${value})`);
+  }
+  return value;
+}
+
+/** Build a minimal env for host-side git/gh subprocesses, optionally with HTTPS_PROXY. */
+export function buildHostGitEnv(config: RuntimeConfig, githubHost: GitHubHost): NodeJS.ProcessEnv | undefined {
+  const proxyUrl = getHostProxyUrl(config, githubHost);
+  if (!proxyUrl) {
+    return undefined;
+  }
+  const env: NodeJS.ProcessEnv = {
+    PATH: process.env.PATH,
+    HOME: process.env.HOME,
+    USER: process.env.USER,
+    SSH_AUTH_SOCK: process.env.SSH_AUTH_SOCK,
+    GH_TOKEN: process.env.GH_TOKEN,
+    GITHUB_TOKEN: process.env.GITHUB_TOKEN,
+    HTTPS_PROXY: proxyUrl,
+  };
+  return env;
 }
 
 export function createGitHostProfile(config: RuntimeConfig, host: GitHubHost): GitHostProfile {
