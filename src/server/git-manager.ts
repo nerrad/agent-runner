@@ -28,13 +28,13 @@ export class GitManager {
     return result.stdout.trim();
   }
 
-  async getDefaultBranch(targetPath: string): Promise<string | undefined> {
+  async getDefaultBranch(targetPath: string, env?: NodeJS.ProcessEnv): Promise<string | undefined> {
     const symbolicRef = await runCommand('git', [ '-C', targetPath, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD' ]);
     if (symbolicRef.exitCode === 0 && symbolicRef.stdout.trim()) {
       return symbolicRef.stdout.trim().replace(/^origin\//, '');
     }
 
-    const remoteShow = await runCommand('git', [ '-C', targetPath, 'remote', 'show', 'origin' ]);
+    const remoteShow = await runCommand('git', [ '-C', targetPath, 'remote', 'show', 'origin' ], env ? { env } : {});
     if (remoteShow.exitCode === 0) {
       const headBranchLine = remoteShow.stdout
         .split('\n')
@@ -51,10 +51,10 @@ export class GitManager {
     return undefined;
   }
 
-  async cloneRepository(repoUrl: string, workspacePath: string, ref?: string): Promise<void> {
+  async cloneRepository(repoUrl: string, workspacePath: string, ref?: string, env?: NodeJS.ProcessEnv): Promise<void> {
     await ensureDir(workspacePath);
 
-    const parentResult = await runCommand('git', [ 'clone', '--origin', 'origin', repoUrl, workspacePath ]);
+    const parentResult = await runCommand('git', [ 'clone', '--origin', 'origin', repoUrl, workspacePath ], env ? { env } : {});
     if (parentResult.exitCode !== 0) {
       throw new Error(parentResult.stderr || `Failed to clone ${repoUrl}`);
     }

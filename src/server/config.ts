@@ -98,6 +98,17 @@ export async function resolveSourceRoot(moduleUrl: string): Promise<string> {
   return path.resolve(path.dirname(fileURLToPath(moduleUrl)), '../..');
 }
 
+export function toHostProxyUrl(proxyUrl: string): string {
+  return proxyUrl.replace('host.docker.internal', '127.0.0.1');
+}
+
+export function getHostProxyUrl(config: RuntimeConfig, githubHost: string): string | undefined {
+  if (githubHost === 'github.com' || !config.githubProxyUrl) {
+    return undefined;
+  }
+  return toHostProxyUrl(config.githubProxyUrl);
+}
+
 export function createGitHostProfile(config: RuntimeConfig, host: GitHubHost): GitHostProfile {
   return {
     host,

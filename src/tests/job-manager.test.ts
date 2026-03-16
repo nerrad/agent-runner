@@ -28,7 +28,7 @@ class MockGitManager {
   public defaultBranch = 'main';
   public currentBranch = '';
 
-  async cloneRepository(_repoUrl: string, workspacePath: string): Promise<void> {
+  async cloneRepository(_repoUrl: string, workspacePath: string, _ref?: string, _env?: NodeJS.ProcessEnv): Promise<void> {
     await mkdir(workspacePath, { recursive: true });
     await writeFile(path.join(workspacePath, '.gitkeep'), '', 'utf8');
     await mkdir(path.join(workspacePath, 'agent-os', 'specs', 'example'), { recursive: true });
@@ -39,7 +39,7 @@ class MockGitManager {
   async createBranch(_workspacePath: string, branchName: string): Promise<void> {
     this.currentBranch = branchName;
   }
-  async getDefaultBranch(): Promise<string> { return this.defaultBranch; }
+  async getDefaultBranch(_targetPath?: string, _env?: NodeJS.ProcessEnv): Promise<string> { return this.defaultBranch; }
   async getHeadSha(): Promise<string> { return this.headSha; }
   async getChangedFiles(): Promise<string[]> { return this.changedFiles; }
   async commitAll(): Promise<boolean> { return true; }

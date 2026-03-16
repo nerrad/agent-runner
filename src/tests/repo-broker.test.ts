@@ -1,7 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { JobRecord } from '../shared/types.js';
+import type { RuntimeConfig } from '../server/config.js';
 import { RepoBroker, isValidBranchName } from '../server/repo-broker.js';
+
+const testConfig: RuntimeConfig = {
+  appDir: '/tmp/agent-runner',
+  jobsDir: '/tmp/agent-runner/jobs',
+  workspacesDir: '/tmp/agent-runner/workspaces',
+  artifactsDir: '/tmp/agent-runner/artifacts',
+  specRoot: '/tmp/agent-runner/specs',
+  ghConfigDir: '/tmp/gh',
+  claudeDir: '/tmp/claude',
+  claudeSettingsPath: '/tmp/.claude.json',
+  codexDir: '/tmp/codex',
+  dockerSocketPath: '/tmp/docker.sock',
+  githubProxyUrl: 'socks5://host.docker.internal:8080',
+  workerImageTag: 'agent-runner-worker:latest',
+  sourceRoot: '/tmp/agent-runner',
+  brokerPort: 4318,
+  brokerHost: 'host.docker.internal',
+  brokerUrl: 'http://host.docker.internal:4318',
+};
 
 function createJobRecord(): JobRecord {
   return {
@@ -44,7 +64,7 @@ function createJobRecord(): JobRecord {
 }
 
 test('repo broker rejects mutating git remote commands in read mode', async () => {
-  const broker = new RepoBroker(async () => ({ stdout: '', stderr: '', exitCode: 0 }));
+  const broker = new RepoBroker(testConfig, async () => ({ stdout: '', stderr: '', exitCode: 0 }));
   await assert.rejects(
     () => broker.runGitRead(createJobRecord(), [ 'remote', 'add', 'origin', 'git@github.com:evil/repo.git' ]),
     /read-only git remote inspection/,
@@ -52,7 +72,7 @@ test('repo broker rejects mutating git remote commands in read mode', async () =
 });
 
 test('repo broker rejects gh api mutations in read mode', async () => {
-  const broker = new RepoBroker(async () => ({ stdout: '', stderr: '', exitCode: 0 }));
+  const broker = new RepoBroker(testConfig, async () => ({ stdout: '', stderr: '', exitCode: 0 }));
   await assert.rejects(
     () => broker.runGhRead(createJobRecord(), [ 'api', '/graphql' ]),
     /graphql/,
@@ -69,7 +89,7 @@ test('repo broker rejects gh api mutations in read mode', async () => {
 
 test('repo broker allows cross-repo gh reads with --repo', async () => {
   const calls: Array<{ command: string; args: string[]; env?: NodeJS.ProcessEnv }> = [];
-  const broker = new RepoBroker(async (command, args, options = {}) => {
+  const broker = new RepoBroker(testConfig, async (command, args, options = {}) => {
     calls.push({ command, args, env: options.env });
     return { stdout: '', stderr: '', exitCode: 0 };
   });
@@ -82,7 +102,7 @@ test('repo broker allows cross-repo gh reads with --repo', async () => {
 });
 
 test('repo broker allows fetch from configured remotes and blocks unknown remotes', async () => {
-  const broker = new RepoBroker(async (_command, args) => {
+  const broker = new RepoBroker(testConfig, async (_command, args) => {
     if (args.includes('remote')) {
       return { stdout: 'origin\nupstream\n', stderr: '', exitCode: 0 };
     }
@@ -98,7 +118,7 @@ test('repo broker allows fetch from configured remotes and blocks unknown remote
 
 test('repo broker renameBranch succeeds for non-default branches', async () => {
   const calls: Array<string[]> = [];
-  const broker = new RepoBroker(async (_command, args) => {
+  const broker = new RepoBroker(testConfig, async (_command, args) => {
     calls.push(args);
     return { stdout: '', stderr: '', exitCode: 0 };
   });
@@ -109,7 +129,7 @@ test('repo broker renameBranch succeeds for non-default branches', async () => {
 });
 
 test('repo broker renameBranch rejects renaming to default branch', async () => {
-  const broker = new RepoBroker(async () => ({ stdout: '', stderr: '', exitCode: 0 }));
+  const broker = new RepoBroker(testConfig, async () => ({ stdout: '', stderr: '', exitCode: 0 }));
   await assert.rejects(
     () => broker.renameBranch(createJobRecord(), 'main'),
     /default branch/,
@@ -117,7 +137,7 @@ test('repo broker renameBranch rejects renaming to default branch', async () => 
 });
 
 test('repo broker renameBranch rejects empty branch name', async () => {
-  const broker = new RepoBroker(async () => ({ stdout: '', stderr: '', exitCode: 0 }));
+  const broker = new RepoBroker(testConfig, async () => ({ stdout: '', stderr: '', exitCode: 0 }));
   await assert.rejects(
     () => broker.renameBranch(createJobRecord(), ''),
     /Missing new branch name/,
@@ -146,7 +166,7 @@ test('isValidBranchName rejects invalid names', () => {
 });
 
 test('repo broker renameBranch rejects invalid branch names', async () => {
-  const broker = new RepoBroker(async () => ({ stdout: '', stderr: '', exitCode: 0 }));
+  const broker = new RepoBroker(testConfig, async () => ({ stdout: '', stderr: '', exitCode: 0 }));
   await assert.rejects(
     () => broker.renameBranch(createJobRecord(), '-flag-like'),
     /Invalid branch name/,
@@ -163,7 +183,7 @@ test('repo broker renameBranch rejects invalid branch names', async () => {
 
 test('repo broker limits writes to origin non-default branches', async () => {
   const calls: Array<string[]> = [];
-  const broker = new RepoBroker(async (_command, args) => {
+  const broker = new RepoBroker(testConfig, async (_command, args) => {
     calls.push(args);
     return { stdout: '', stderr: '', exitCode: 0 };
   });
@@ -180,4 +200,43 @@ test('repo broker limits writes to origin non-default branches', async () => {
     () => broker.pushBranch(createJobRecord(), { remote: 'upstream', branch: 'feature/test' }),
     /limited to origin/,
   );
+});
+
+test('repo broker sets HTTPS_PROXY for enterprise github hosts', async () => {
+  const capturedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+  const broker = new RepoBroker(testConfig, async (_command, _args, options = {}) => {
+    capturedEnvs.push(options.env);
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  const enterpriseRecord = {
+    ...createJobRecord(),
+    spec: {
+      ...createJobRecord().spec,
+      repoUrl: 'git@github.a8c.com:owner/repo.git',
+      githubHost: 'github.a8c.com',
+    },
+  };
+
+  await broker.runGhRead(enterpriseRecord, [ 'repo', 'view' ]);
+  assert.equal(capturedEnvs[0]?.HTTPS_PROXY, 'socks5://127.0.0.1:8080');
+
+  capturedEnvs.length = 0;
+  await broker.openPr(enterpriseRecord, { title: 'Test PR' });
+  assert.equal(capturedEnvs[0]?.HTTPS_PROXY, 'socks5://127.0.0.1:8080');
+
+  capturedEnvs.length = 0;
+  await broker.pushBranch(enterpriseRecord, { branch: 'agent-runner/job-123' });
+  assert.equal(capturedEnvs[0]?.HTTPS_PROXY, 'socks5://127.0.0.1:8080');
+});
+
+test('repo broker does not set HTTPS_PROXY for github.com hosts', async () => {
+  const capturedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+  const broker = new RepoBroker(testConfig, async (_command, _args, options = {}) => {
+    capturedEnvs.push(options.env);
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  await broker.runGhRead(createJobRecord(), [ 'repo', 'view' ]);
+  assert.equal(capturedEnvs[0]?.HTTPS_PROXY, undefined);
 });
