@@ -17,7 +17,7 @@ agent-runner run \
   --repo /path/to/repo \
   --spec agent-os/specs/feature-x \
   --runtime claude \
-  --profile repo-broker --repo-access broker
+  --profile repo-broker
 ```
 
 ## How it works
@@ -122,7 +122,7 @@ agent-runner skills install [--force] [--claude-only] [--codex-only]
 | `--ref <ref>` | Git ref to check out |
 | `--branch <name>` | Working branch name; auto-generated if omitted |
 | `--profile <name>` | Access profile (see above) |
-| `--repo-access <none\|broker\|ambient>` | Must match profile |
+| `--repo-access <none\|broker\|ambient>` | Auto-derived from profile; only required for `dangerous` (choose `broker` or `ambient`) |
 | `--agent-state <mounted\|none>` | Default: `mounted` |
 | `--detach` | Run in background |
 

@@ -66,7 +66,7 @@ test('parseCliArgs handles run and installer commands', () => {
     branch: undefined,
     detach: true,
     profile: 'safe',
-    repoAccess: 'none',
+    repoAccess: undefined,
     agentState: 'mounted',
   });
 
@@ -100,7 +100,7 @@ test('parseCliArgs parses --branch flag', () => {
     branch: 'feature/my-branch',
     detach: false,
     profile: 'safe',
-    repoAccess: 'none',
+    repoAccess: undefined,
     agentState: 'mounted',
   });
 });
@@ -123,7 +123,7 @@ test('normalizeRunSpec flows branch through to jobSpec', async () => {
     branch: 'my-custom-branch',
     detach: false,
     profile: 'safe',
-    repoAccess: 'none',
+    repoAccess: undefined,
     agentState: 'mounted',
   }, config);
 
@@ -155,7 +155,7 @@ test('normalizeRunSpec converts a local repo path into a remote url and repo-rel
     host: 'github.com',
     detach: false,
     profile: 'safe',
-    repoAccess: 'none',
+    repoAccess: undefined,
     agentState: 'mounted',
   }, config);
 
@@ -185,12 +185,93 @@ test('normalizeRunSpec accepts absolute spec paths for git URLs', async () => {
     host: 'github.com',
     detach: false,
     profile: 'safe',
-    repoAccess: 'none',
+    repoAccess: undefined,
     agentState: 'mounted',
   }, config);
 
   assert.equal(normalized.repoSource, 'url');
   assert.equal(normalized.jobSpec.specPath, planPath);
+});
+
+test('normalizeRunSpec auto-derives repoAccessMode from profile', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-cli-access-'));
+  const specRoot = path.join(root, 'specs');
+  await mkdir(specRoot, { recursive: true });
+  const planPath = path.join(specRoot, 'plan.md');
+  await writeFile(planPath, '# Plan\n', 'utf8');
+  const config = createRuntimeConfig(root);
+
+  const base = {
+    command: 'run' as const,
+    repo: 'git@github.com:owner/repo.git',
+    spec: planPath,
+    runtime: 'claude' as const,
+    effort: 'auto' as const,
+    host: 'github.com',
+    detach: false,
+    agentState: 'mounted' as const,
+  };
+
+  // safe (default) → none
+  const safe = await normalizeRunSpec({ ...base, profile: 'safe' }, config);
+  assert.equal(safe.jobSpec.repoAccessMode, 'none');
+
+  // repo-broker → broker
+  const repoBroker = await normalizeRunSpec({ ...base, profile: 'repo-broker' }, config);
+  assert.equal(repoBroker.jobSpec.repoAccessMode, 'broker');
+
+  // docker-broker → broker
+  const dockerBroker = await normalizeRunSpec({ ...base, profile: 'docker-broker' }, config);
+  assert.equal(dockerBroker.jobSpec.repoAccessMode, 'broker');
+
+  // dangerous without --repo-access → error
+  await assert.rejects(
+    () => normalizeRunSpec({ ...base, profile: 'dangerous' }, config),
+    /dangerous profile requires an explicit --repo-access flag/,
+  );
+
+  // dangerous with explicit broker → ok
+  const dangerousBroker = await normalizeRunSpec({ ...base, profile: 'dangerous', repoAccess: 'broker' }, config);
+  assert.equal(dangerousBroker.jobSpec.repoAccessMode, 'broker');
+
+  // dangerous with explicit ambient → ok
+  const dangerousAmbient = await normalizeRunSpec({ ...base, profile: 'dangerous', repoAccess: 'ambient' }, config);
+  assert.equal(dangerousAmbient.jobSpec.repoAccessMode, 'ambient');
+
+  // dangerous with explicit none → error
+  await assert.rejects(
+    () => normalizeRunSpec({ ...base, profile: 'dangerous', repoAccess: 'none' }, config),
+    /dangerous jobs cannot use --repo-access none/,
+  );
+
+  // safe with explicit broker → error
+  await assert.rejects(
+    () => normalizeRunSpec({ ...base, profile: 'safe', repoAccess: 'broker' }, config),
+    /safe jobs must use --repo-access none/,
+  );
+
+  // repo-broker with explicit ambient → error
+  await assert.rejects(
+    () => normalizeRunSpec({ ...base, profile: 'repo-broker', repoAccess: 'ambient' }, config),
+    /repo-broker jobs must use --repo-access broker/,
+  );
+});
+
+test('parseCliArgs parses explicit --repo-access flag', () => {
+  const run = parseCliArgs([
+    'run',
+    '--repo', '/tmp/repo',
+    '--spec', 'spec/plan.md',
+    '--runtime', 'claude',
+    '--profile', 'dangerous',
+    '--repo-access', 'ambient',
+  ]);
+
+  assert.equal(run.command, 'run');
+  if (run.command === 'run') {
+    assert.equal(run.profile, 'dangerous');
+    assert.equal(run.repoAccess, 'ambient');
+  }
 });
 
 test('resolveSkillTargetRoot maps Claude and Codex install roots', () => {

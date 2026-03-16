@@ -18,7 +18,7 @@ export type CliCommand =
     branch?: string;
     detach: boolean;
     profile: JobSpec['capabilityProfile'];
-    repoAccess: JobSpec['repoAccessMode'];
+    repoAccess?: JobSpec['repoAccessMode'];
     agentState: JobSpec['agentStateMode'];
   }
   | { command: 'init' }
@@ -99,7 +99,7 @@ function parseRunArgs(args: string[]): CliCommand {
   let branch: string | undefined;
   let detach = false;
   let profile: JobSpec['capabilityProfile'] = 'safe';
-  let repoAccess: JobSpec['repoAccessMode'] = 'none';
+  let repoAccess: JobSpec['repoAccessMode'] | undefined;
   let agentState: JobSpec['agentStateMode'] = 'mounted';
 
   for (let index = 0; index < args.length; index += 1) {
@@ -276,8 +276,24 @@ export async function normalizeRunSpec(
 
 function normalizeRepoAccess(
   profile: JobSpec['capabilityProfile'],
-  requested: JobSpec['repoAccessMode'],
+  requested: JobSpec['repoAccessMode'] | undefined,
 ): JobSpec['repoAccessMode'] {
+  // Auto-derive when not explicitly provided
+  if (requested === undefined) {
+    switch (profile) {
+      case 'safe':
+        return 'none';
+      case 'repo-broker':
+      case 'docker-broker':
+        return 'broker';
+      case 'dangerous':
+        throw new Error(
+          'dangerous profile requires an explicit --repo-access flag (broker or ambient)',
+        );
+    }
+  }
+
+  // Explicit value provided — validate the pairing
   if (profile === 'dangerous') {
     if (requested === 'none') {
       throw new Error('dangerous jobs cannot use --repo-access none');
@@ -292,6 +308,7 @@ function normalizeRepoAccess(
     return requested;
   }
 
+  // repo-broker / docker-broker
   if (requested !== 'broker') {
     throw new Error(`${profile} jobs must use --repo-access broker`);
   }

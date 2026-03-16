@@ -853,25 +853,43 @@ export class JobManager {
 
   private normalizeJobSpec(spec: JobSpec): JobSpec {
     const capabilityProfile = spec.capabilityProfile ?? 'safe';
-    const repoAccessMode = spec.repoAccessMode ?? 'none';
+    const agentStateMode = spec.agentStateMode ?? 'mounted';
 
-    if (capabilityProfile === 'dangerous' && repoAccessMode === 'none') {
-      throw new Error('dangerous jobs cannot use repoAccessMode=none; choose ambient or a safer profile');
-    }
+    // Auto-derive repoAccessMode from profile when the caller left it at the
+    // Zod default ('none') and the profile implies a different value.
+    let repoAccessMode = spec.repoAccessMode ?? 'none';
+    const callerLeftDefault = repoAccessMode === 'none';
 
-    if (capabilityProfile === 'safe' && repoAccessMode !== 'none') {
-      throw new Error('safe jobs must use repoAccessMode=none');
-    }
-
-    if ((capabilityProfile === 'repo-broker' || capabilityProfile === 'docker-broker') && repoAccessMode !== 'broker') {
-      throw new Error(`${capabilityProfile} jobs must use repoAccessMode=broker`);
+    if (callerLeftDefault) {
+      switch (capabilityProfile) {
+        case 'safe':
+          repoAccessMode = 'none';
+          break;
+        case 'repo-broker':
+        case 'docker-broker':
+          repoAccessMode = 'broker';
+          break;
+        case 'dangerous':
+          throw new Error('dangerous jobs require an explicit repoAccessMode (broker or ambient)');
+      }
+    } else {
+      // Explicit value provided — validate the pairing
+      if (capabilityProfile === 'dangerous' && repoAccessMode === 'none') {
+        throw new Error('dangerous jobs cannot use repoAccessMode=none; choose ambient or a safer profile');
+      }
+      if (capabilityProfile === 'safe' && repoAccessMode !== 'none') {
+        throw new Error('safe jobs must use repoAccessMode=none');
+      }
+      if ((capabilityProfile === 'repo-broker' || capabilityProfile === 'docker-broker') && repoAccessMode !== 'broker') {
+        throw new Error(`${capabilityProfile} jobs must use repoAccessMode=broker`);
+      }
     }
 
     return {
       ...spec,
       capabilityProfile,
       repoAccessMode,
-      agentStateMode: spec.agentStateMode ?? 'mounted',
+      agentStateMode,
     };
   }
 
