@@ -122,12 +122,15 @@ export function App(): ReactElement {
     logContentRef.current = '';
     setLogContent('');
 
+    const isDebug = logKind === 'debug';
+
     const replaceLog = (nextContent: string): void => {
       if (closed || nextContent === logContentRef.current) {
         return;
       }
       logContentRef.current = nextContent;
-      startTransition(() => setLogContent(nextContent));
+      const display = isDebug ? reverseLines(nextContent) : nextContent;
+      startTransition(() => setLogContent(display));
     };
 
     const refreshLog = async (): Promise<void> => {
@@ -179,7 +182,12 @@ export function App(): ReactElement {
       }
 
       logContentRef.current = nextContent;
-      startTransition(() => setLogContent(nextContent));
+      if (isDebug) {
+        const reversed = reverseLines(chunk);
+        startTransition(() => setLogContent((prev) => reversed + (prev ? '\n' + prev : '')));
+      } else {
+        startTransition(() => setLogContent(nextContent));
+      }
     };
 
     return () => {
@@ -712,11 +720,8 @@ function renderViewerBody(
   setShowRawFinalResponse: (next: boolean) => void,
 ): ReactElement {
   if (isLiveLogTab(viewerTab)) {
-    const displayContent = viewerTab === 'debug' && logContent
-      ? reverseLines(logContent)
-      : logContent;
     return (
-      <pre>{displayContent || (viewerTab === 'debug' ? 'Waiting for debug output...' : 'Waiting for output...')}</pre>
+      <pre>{logContent || (viewerTab === 'debug' ? 'Waiting for debug output...' : 'Waiting for output...')}</pre>
     );
   }
 
