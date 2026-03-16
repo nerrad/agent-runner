@@ -301,11 +301,13 @@ export class JobManager {
     const prepared = await this.adapters.prepare(record);
     const brokerLease = await this.maybeIssueBrokerLease(record);
     if (brokerLease) {
-      runtimeEnv.AGENT_RUNNER_BROKER_TOKEN = brokerLease.token;
+      const isBrokerProfile = record.spec.capabilityProfile === 'repo-broker' || record.spec.capabilityProfile === 'docker-broker';
+      const containerToken = isBrokerProfile ? brokerLease.token : brokerLease.renameToken;
+      runtimeEnv.AGENT_RUNNER_BROKER_TOKEN = containerToken;
       runtimeEnv.AGENT_RUNNER_BROKER_URL = this.config.brokerUrl;
       runtimeEnv.AGENT_RUNNER_JOB_ID = record.id;
       await writeJsonAtomic(record.artifacts.brokerEnvPath ?? path.join(record.artifacts.inputsDir, 'broker-env.json'), {
-        AGENT_RUNNER_BROKER_TOKEN: brokerLease.token,
+        AGENT_RUNNER_BROKER_TOKEN: containerToken,
         AGENT_RUNNER_BROKER_URL: this.config.brokerUrl,
         AGENT_RUNNER_JOB_ID: record.id,
       });
@@ -887,10 +889,7 @@ export class JobManager {
   }
 
   private async maybeIssueBrokerLease(record: JobRecord) {
-    if (record.spec.capabilityProfile === 'repo-broker' || record.spec.capabilityProfile === 'docker-broker') {
-      return await this.brokerLeaseStore.issue(record);
-    }
-    return null;
+    return await this.brokerLeaseStore.issue(record);
   }
 
   private async revokeBrokerLease(jobId: string): Promise<void> {

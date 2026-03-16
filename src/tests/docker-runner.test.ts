@@ -134,7 +134,7 @@ test('docker runner injects broker lease env for brokered profiles when request 
   await mkdir(path.join(runtimeConfig.jobsDir, brokeredJob.id), { recursive: true });
   await writeFile(
     path.join(runtimeConfig.jobsDir, brokeredJob.id, 'broker-lease.json'),
-    JSON.stringify({ token: 'lease-token-123' }),
+    JSON.stringify({ token: 'lease-token-123', renameToken: 'rename-token-123' }),
     'utf8',
   );
 
@@ -149,4 +149,34 @@ test('docker runner injects broker lease env for brokered profiles when request 
   assert.match(commandString, /AGENT_RUNNER_JOB_ID=job-123/);
   assert.match(commandString, /AGENT_RUNNER_BROKER_URL=http:\/\/host\.docker\.internal:4318/);
   assert.match(commandString, /AGENT_RUNNER_BROKER_TOKEN=lease-token-123/);
+});
+
+test('docker runner injects renameToken for safe-profile job from lease file', async () => {
+  const runner = new DockerRunner(runtimeConfig);
+  const safeJob: JobRecord = {
+    ...jobRecord,
+    spec: {
+      ...jobRecord.spec,
+      capabilityProfile: 'safe',
+      repoAccessMode: 'none',
+    },
+  };
+
+  await mkdir(path.join(runtimeConfig.jobsDir, safeJob.id), { recursive: true });
+  await writeFile(
+    path.join(runtimeConfig.jobsDir, safeJob.id, 'broker-lease.json'),
+    JSON.stringify({ token: 'full-token', renameToken: 'rename-only' }),
+    'utf8',
+  );
+
+  const args = await runner.buildRunArgs({
+    job: safeJob,
+    command: [ 'bash', '-lc', 'env' ],
+    env: { ANTHROPIC_API_KEY: 'test-key' },
+    onLog: () => undefined,
+  });
+
+  const commandString = args.join(' ');
+  assert.match(commandString, /AGENT_RUNNER_BROKER_TOKEN=rename-only/);
+  assert.doesNotMatch(commandString, /AGENT_RUNNER_BROKER_TOKEN=full-token/);
 });

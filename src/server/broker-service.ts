@@ -95,8 +95,8 @@ export async function isBrokerReachable(port: number): Promise<boolean> {
   }
 }
 
-function requiresBrokerService(record: JobRecord): boolean {
-  return record.spec.capabilityProfile === 'repo-broker' || record.spec.capabilityProfile === 'docker-broker';
+function requiresBrokerService(_record: JobRecord): boolean {
+  return true;
 }
 
 async function waitForBrokerReady(port: number): Promise<void> {

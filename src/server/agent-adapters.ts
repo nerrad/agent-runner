@@ -176,11 +176,7 @@ function buildAgentPrompt(spec: JobSpec, branchName: string, branchExplicit: boo
       '- If conventions are found, follow them.',
       '- Otherwise, rename to: agent-runner/{brief-slug} where the slug is at most 20 lowercase-hyphenated characters summarizing the work.',
     );
-    if (spec.repoAccessMode === 'broker') {
-      lines.push('- Use `ar-branch-rename <new-name>` to rename.');
-    } else {
-      lines.push('- Use `git branch -m <new-name>` to rename.');
-    }
+    lines.push('- Use `ar-branch-rename <new-name>` to rename.');
   }
 
   return lines.join('\n');
