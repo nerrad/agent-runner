@@ -122,12 +122,15 @@ export function App(): ReactElement {
     logContentRef.current = '';
     setLogContent('');
 
+    const isDebug = logKind === 'debug';
+
     const replaceLog = (nextContent: string): void => {
       if (closed || nextContent === logContentRef.current) {
         return;
       }
       logContentRef.current = nextContent;
-      startTransition(() => setLogContent(nextContent));
+      const display = isDebug ? reverseLines(nextContent) : nextContent;
+      startTransition(() => setLogContent(display));
     };
 
     const refreshLog = async (): Promise<void> => {
@@ -179,7 +182,12 @@ export function App(): ReactElement {
       }
 
       logContentRef.current = nextContent;
-      startTransition(() => setLogContent(nextContent));
+      if (isDebug) {
+        const reversed = reverseLines(chunk);
+        startTransition(() => setLogContent((prev) => reversed + (prev ? '\n' + prev : '')));
+      } else {
+        startTransition(() => setLogContent(nextContent));
+      }
     };
 
     return () => {
@@ -1177,6 +1185,15 @@ function stringifyMetadataValue(value: unknown): string {
   }
 
   return JSON.stringify(value);
+}
+
+function reverseLines(content: string): string {
+  const lines = content.split('\n');
+  if (lines.length > 0 && lines[lines.length - 1] === '') {
+    lines.pop();
+  }
+  lines.reverse();
+  return lines.join('\n');
 }
 
 function renderMarkdownishText(content: string): ReactElement {
