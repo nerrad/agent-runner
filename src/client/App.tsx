@@ -712,8 +712,11 @@ function renderViewerBody(
   setShowRawFinalResponse: (next: boolean) => void,
 ): ReactElement {
   if (isLiveLogTab(viewerTab)) {
+    const displayContent = viewerTab === 'debug' && logContent
+      ? reverseLines(logContent)
+      : logContent;
     return (
-      <pre>{logContent || (viewerTab === 'debug' ? 'Waiting for debug output...' : 'Waiting for output...')}</pre>
+      <pre>{displayContent || (viewerTab === 'debug' ? 'Waiting for debug output...' : 'Waiting for output...')}</pre>
     );
   }
 
@@ -1177,6 +1180,15 @@ function stringifyMetadataValue(value: unknown): string {
   }
 
   return JSON.stringify(value);
+}
+
+function reverseLines(content: string): string {
+  const lines = content.split('\n');
+  if (lines.length > 0 && lines[lines.length - 1] === '') {
+    lines.pop();
+  }
+  lines.reverse();
+  return lines.join('\n');
 }
 
 function renderMarkdownishText(content: string): ReactElement {
