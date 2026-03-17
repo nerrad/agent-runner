@@ -175,6 +175,52 @@ export function createBrokerApp(runtime: RuntimeContext): express.Express {
     }
   });
 
+  // ── MCP Broker Routes ──────────────────────────────────────────────
+
+  app.get('/broker/jobs/:jobId/mcp/:serverName/sse', async (request, response, next) => {
+    try {
+      const { jobId, serverName } = request.params;
+      const token = typeof request.query.token === 'string' ? request.query.token : '';
+      await authorizeMcpBrokerRequest(runtime, jobId, token);
+      const state = await runtime.mcpBroker.ensureProcess(jobId, serverName);
+      if (!state) {
+        throw new Error(`Failed to start MCP server '${serverName}'`);
+      }
+      runtime.mcpBroker.handleSseConnection(jobId, serverName, response, runtime.config.brokerUrl, token);
+    } catch (error) {
+      await appendSecurityAudit(runtime, request.params.jobId, 'mcp-broker', `sse:${request.params.serverName}`, { token: '[redacted]' }, error);
+      next(error);
+    }
+  });
+
+  app.post('/broker/jobs/:jobId/mcp/:serverName/message', async (request, response, next) => {
+    try {
+      const { jobId, serverName } = request.params;
+      const token = typeof request.query.token === 'string' ? request.query.token : '';
+      await authorizeMcpBrokerRequest(runtime, jobId, token);
+      await runtime.mcpBroker.handleMessage(jobId, serverName, request.body);
+      response.status(202).json({ ok: true });
+    } catch (error) {
+      await appendSecurityAudit(runtime, request.params.jobId, 'mcp-broker', `message:${request.params.serverName}`, { token: '[redacted]' }, error);
+      next(error);
+    }
+  });
+
+  app.get('/broker/jobs/:jobId/mcp/status', async (request, response, next) => {
+    try {
+      const { jobId } = request.params;
+      const token = typeof request.query.token === 'string' ? request.query.token : '';
+      await authorizeMcpBrokerRequest(runtime, jobId, token);
+      const status = runtime.mcpBroker.getJobStatus(jobId);
+      response.json(status);
+    } catch (error) {
+      await appendSecurityAudit(runtime, request.params.jobId, 'mcp-broker', 'status', { token: '[redacted]' }, error);
+      next(error);
+    }
+  });
+
+  // ── WP-Env Routes ────────────────────────────────────────────────
+
   app.post('/broker/jobs/:jobId/wp-env/:subcommand', async (request, response, next) => {
     try {
       const subcommand = asWpEnvCommand(request.params.subcommand);
@@ -224,6 +270,33 @@ async function authorizeBrokerJob(runtime: RuntimeContext, jobId: string, token:
 
 async function authorizeBrokerJobForRename(runtime: RuntimeContext, jobId: string, token: unknown) {
   return await authorizeRequest(runtime, jobId, token, (id, t) => runtime.brokerLeaseStore.validateRename(id, t));
+}
+
+async function authorizeMcpBrokerRequest(runtime: RuntimeContext, jobId: string, token: unknown) {
+  // MCP proxy is available to all profiles when agentStateMode=mounted.
+  // Validates against either the full lease token or the rename token,
+  // since the container may have either depending on the profile.
+  if (typeof token !== 'string' || !token.trim()) {
+    throw new Error('Missing broker token');
+  }
+  let valid = false;
+  try {
+    await runtime.brokerLeaseStore.validate(jobId, token);
+    valid = true;
+  } catch {
+    // Try rename token
+  }
+  if (!valid) {
+    await runtime.brokerLeaseStore.validateRename(jobId, token);
+  }
+  const record = await runtime.manager.getJob(jobId);
+  if (!record) {
+    throw new Error('Job not found');
+  }
+  if ([ 'blocked', 'completed', 'failed', 'canceled' ].includes(record.status)) {
+    throw new Error(`Broker access is not available after job ${record.status}`);
+  }
+  return record;
 }
 
 async function authorizeDockerBrokerJob(runtime: RuntimeContext, jobId: string, token: unknown) {

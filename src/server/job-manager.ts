@@ -10,6 +10,8 @@ import { buildHostGitEnv, createGitHostProfile } from './config.js';
 import type { DockerBroker } from './docker-broker.js';
 import type { DockerRunner } from './docker-runner.js';
 import { ensureDir, safeRemove, writeJsonAtomic } from './fs-utils.js';
+import type { McpBroker } from './mcp-broker.js';
+import { rewriteMcpConfigs, type McpRewriteFileOverlay } from './mcp-rewriter.js';
 import type { GitManager } from './git-manager.js';
 import { JobEvents } from './job-events.js';
 import { launchDetachedJobRunner } from './job-launcher.js';
@@ -89,6 +91,7 @@ export class JobManager {
     private readonly agentStateAuditor: AgentStateAuditor,
     private readonly brokerLeaseStore: BrokerLeaseStore,
     private readonly dockerBroker: DockerBroker,
+    private readonly mcpBroker: McpBroker,
     private readonly securityAuditLogger: SecurityAuditLogger,
     options: JobManagerOptions = {},
   ) {
@@ -173,6 +176,7 @@ export class JobManager {
     }
 
     await this.cleanupBrokeredDockerResources(record);
+    await this.cleanupMcpProcesses(record.id);
     await this.revokeBrokerLease(jobId);
 
     if (TERMINAL_STATUSES.has(record.status)) {
@@ -211,6 +215,7 @@ export class JobManager {
       const record = await this.requireJob(jobId);
       if (TERMINAL_STATUSES.has(record.status)) {
         await this.cleanupBrokeredDockerResources(record);
+        await this.cleanupMcpProcesses(jobId);
         await this.revokeBrokerLease(jobId);
         return;
       }
@@ -229,6 +234,7 @@ export class JobManager {
           ...record,
           status: 'failed',
         });
+        await this.cleanupMcpProcesses(jobId);
       }
     } finally {
       await this.releaseJobSlot(lock);
@@ -312,6 +318,30 @@ export class JobManager {
         AGENT_RUNNER_JOB_ID: record.id,
       });
     }
+    let mcpOverlays: McpRewriteFileOverlay[] | undefined;
+    if (record.spec.agentStateMode === 'mounted' && brokerLease) {
+      const isBrokerProfile = record.spec.capabilityProfile === 'repo-broker' || record.spec.capabilityProfile === 'docker-broker';
+      const containerToken = isBrokerProfile ? brokerLease.token : brokerLease.renameToken;
+      const mcpStagingDir = path.join(path.dirname(record.artifacts.outputsDir), 'mcp-staging');
+      try {
+        const rewriteResult = await rewriteMcpConfigs(
+          this.config, mcpStagingDir, record.id, this.config.brokerUrl, containerToken,
+        );
+        if (rewriteResult.manifest.length > 0) {
+          mcpOverlays = rewriteResult.overlays;
+          await writeJsonAtomic(record.artifacts.mcpManifestPath ?? path.join(path.dirname(record.artifacts.logPath), 'mcp-manifest.json'), rewriteResult.manifest);
+          await this.appendRunnerLogLine(logTarget,
+            `MCP proxy: ${rewriteResult.manifest.length} server(s) rewritten [${rewriteResult.manifest.map((s) => s.name).join(', ')}]`);
+        }
+        if (rewriteResult.skipped.length > 0) {
+          await this.appendRunnerLogLine(logTarget,
+            `MCP proxy: ${rewriteResult.skipped.length} URL-based server(s) unchanged [${rewriteResult.skipped.join(', ')}]`);
+        }
+      } catch (error) {
+        await this.appendRunnerLogLine(logTarget, `MCP proxy rewrite failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
     await this.appendRunnerLogLine(logTarget, 'building worker image and launching agent');
     await this.docker.ensureImageBuilt();
 
@@ -332,6 +362,7 @@ export class JobManager {
         job: record,
         command: prepared.command,
         env: runtimeEnv,
+        mcpOverlays,
         onStart: async (containerId) => {
           record = await this.updateRecord(record, {
             containerId,
@@ -370,6 +401,7 @@ export class JobManager {
     const latestRecord = await this.requireJob(record.id);
     if (latestRecord.status === 'canceled') {
       await this.cleanupBrokeredDockerResources(latestRecord);
+      await this.cleanupMcpProcesses(latestRecord.id);
       await this.revokeBrokerLease(latestRecord.id);
       await this.updateRecord(latestRecord, {
         endedAt: latestRecord.endedAt ?? new Date().toISOString(),
@@ -379,6 +411,7 @@ export class JobManager {
 
     if (authLoopState.blockerReason) {
       await this.cleanupBrokeredDockerResources(latestRecord);
+      await this.cleanupMcpProcesses(latestRecord.id);
       await this.revokeBrokerLease(latestRecord.id);
       await this.updateRecord(latestRecord, {
         status: 'failed',
@@ -417,6 +450,7 @@ export class JobManager {
 
     if (dockerResult.exitCode !== 0 && !agentResult) {
       await this.cleanupBrokeredDockerResources(record);
+      await this.cleanupMcpProcesses(record.id);
       await this.revokeBrokerLease(record.id);
       await this.updateRecord(record, {
         status: 'failed',
@@ -432,6 +466,7 @@ export class JobManager {
       endedAt: new Date().toISOString(),
     });
     await this.cleanupBrokeredDockerResources(completedRecord);
+    await this.cleanupMcpProcesses(completedRecord.id);
     await this.revokeBrokerLease(completedRecord.id);
   }
 
@@ -487,6 +522,7 @@ export class JobManager {
       specSourceType,
       resolvedSpec: record.resolvedSpec,
       agentStateModified: agentStateAudit?.changed ?? false,
+      ...await this.readMcpSummary(record),
     });
   }
 
@@ -912,6 +948,28 @@ export class JobManager {
 
   private async revokeBrokerLease(jobId: string): Promise<void> {
     await this.brokerLeaseStore.revoke(jobId);
+  }
+
+  private async readMcpSummary(record: JobRecord): Promise<{ mcpProxiedServers?: string[]; mcpUrlServers?: string[] }> {
+    const manifestPath = record.artifacts.mcpManifestPath;
+    if (!manifestPath) {
+      return {};
+    }
+    try {
+      const raw = await readFile(manifestPath, 'utf8');
+      const manifest = JSON.parse(raw) as Array<{ name: string }>;
+      return { mcpProxiedServers: manifest.map((e) => e.name) };
+    } catch {
+      return {};
+    }
+  }
+
+  private async cleanupMcpProcesses(jobId: string): Promise<void> {
+    try {
+      await this.mcpBroker.cleanupJob(jobId);
+    } catch (error) {
+      // Non-fatal: MCP process cleanup failure shouldn't block job completion
+    }
   }
 
   private async cleanupBrokeredDockerResources(record: JobRecord): Promise<void> {

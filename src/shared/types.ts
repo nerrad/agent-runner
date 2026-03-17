@@ -81,6 +81,7 @@ export const ArtifactBundleSchema = z.object({
   outputsDir: z.string().min(1),
   agentStateSummaryPath: z.string().min(1),
   agentStateDiffPath: z.string().min(1),
+  mcpManifestPath: z.string().min(1).optional(),
 });
 export type ArtifactBundle = z.infer<typeof ArtifactBundleSchema>;
 

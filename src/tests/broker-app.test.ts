@@ -143,6 +143,7 @@ test('broker app writes a security audit entry for blocked broker activity', asy
       },
     } as RuntimeContext['repoBroker'],
     dockerBroker: {} as RuntimeContext['dockerBroker'],
+    mcpBroker: {} as RuntimeContext['mcpBroker'],
     securityAuditLogger: new SecurityAuditLogger(),
     manager: {
       async getJob(jobId: string) {
@@ -226,6 +227,7 @@ test('broker app rename-branch endpoint updates record and returns success', asy
       },
     } as RuntimeContext['repoBroker'],
     dockerBroker: {} as RuntimeContext['dockerBroker'],
+    mcpBroker: {} as RuntimeContext['mcpBroker'],
     securityAuditLogger: new SecurityAuditLogger(),
     manager: {
       async getJob(jobId: string) {
@@ -304,6 +306,7 @@ test('broker app rename-branch endpoint does not update record on git failure', 
       },
     } as RuntimeContext['repoBroker'],
     dockerBroker: {} as RuntimeContext['dockerBroker'],
+    mcpBroker: {} as RuntimeContext['mcpBroker'],
     securityAuditLogger: new SecurityAuditLogger(),
     manager: {
       async getJob(jobId: string) {
@@ -381,6 +384,7 @@ test('broker app exposes wp-env commands for docker-broker jobs', async () => {
         };
       },
     } as RuntimeContext['dockerBroker'],
+    mcpBroker: {} as RuntimeContext['mcpBroker'],
     securityAuditLogger: new SecurityAuditLogger(),
     manager: {
       async getJob(jobId: string) {
@@ -459,6 +463,7 @@ test('broker app rename-branch endpoint succeeds for safe-profile job with renam
       },
     } as RuntimeContext['repoBroker'],
     dockerBroker: {} as RuntimeContext['dockerBroker'],
+    mcpBroker: {} as RuntimeContext['mcpBroker'],
     securityAuditLogger: new SecurityAuditLogger(),
     manager: {
       async getJob(jobId: string) {
@@ -514,6 +519,7 @@ test('broker app git-read endpoint rejects safe-profile job with rename-only tok
     } as RuntimeContext['brokerLeaseStore'],
     repoBroker: {} as RuntimeContext['repoBroker'],
     dockerBroker: {} as RuntimeContext['dockerBroker'],
+    mcpBroker: {} as RuntimeContext['mcpBroker'],
     securityAuditLogger: new SecurityAuditLogger(),
     manager: {
       async getJob(jobId: string) {

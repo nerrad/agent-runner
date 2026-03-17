@@ -10,6 +10,7 @@ import { pathExists } from '../server/fs-utils.js';
 import { AgentStateAuditor } from '../server/agent-state-audit.js';
 import { BrokerLeaseStore } from '../server/broker-lease.js';
 import { DockerBroker } from '../server/docker-broker.js';
+import { McpBroker } from '../server/mcp-broker.js';
 import { JobStore } from '../server/job-store.js';
 import { JobEvents } from '../server/job-events.js';
 import type { JobManagerOptions } from '../server/job-manager.js';
@@ -265,6 +266,7 @@ function createManager(
     new AgentStateAuditor(config),
     new BrokerLeaseStore(config),
     new DockerBroker(config),
+    new McpBroker(config),
     new SecurityAuditLogger(),
     {
       runMode: 'inline',
@@ -421,6 +423,7 @@ test('job manager writes branchSource convention when agent renames branch durin
     new AgentStateAuditor(config),
     new BrokerLeaseStore(config),
     new DockerBroker(config),
+    new McpBroker(config),
     new SecurityAuditLogger(),
     { runMode: 'inline' },
   );
@@ -716,6 +719,7 @@ test('job manager forwards proxy env to git clone and getDefaultBranch for enter
     new AgentStateAuditor(config),
     new BrokerLeaseStore(config),
     new DockerBroker(config),
+    new McpBroker(config),
     new SecurityAuditLogger(),
     { runMode: 'inline' },
   );
@@ -764,6 +768,7 @@ test('job manager does not pass proxy env for github.com jobs', async () => {
     new AgentStateAuditor(config),
     new BrokerLeaseStore(config),
     new DockerBroker(config),
+    new McpBroker(config),
     new SecurityAuditLogger(),
     { runMode: 'inline' },
   );
