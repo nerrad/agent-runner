@@ -1,7 +1,7 @@
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
-import type { RuntimeConfig } from './config.js';
+import { CONTAINER_HOME, type RuntimeConfig } from './config.js';
 import { ensureDir } from './fs-utils.js';
 
 export interface McpServerManifestEntry {
@@ -48,10 +48,8 @@ export async function rewriteMcpConfigs(
   const overlays: McpRewriteFileOverlay[] = [];
   const skipped: string[] = [];
   const seen = new Set<string>();
-  const containerHome = '/home/agent-runner';
-
-  await rewriteClaudePlugins(config, stagingDir, jobId, brokerBaseUrl, brokerToken, containerHome, manifest, overlays, skipped, seen);
-  await rewriteCodexConfig(config, stagingDir, jobId, brokerBaseUrl, brokerToken, containerHome, manifest, overlays, skipped, seen);
+  await rewriteClaudePlugins(config, stagingDir, jobId, brokerBaseUrl, brokerToken, CONTAINER_HOME, manifest, overlays, skipped, seen);
+  await rewriteCodexConfig(config, stagingDir, jobId, brokerBaseUrl, brokerToken, CONTAINER_HOME, manifest, overlays, skipped, seen);
 
   return { manifest, overlays, skipped };
 }
@@ -105,7 +103,7 @@ async function rewriteClaudePlugins(
         const brokerUrl = buildBrokerSseUrl(brokerBaseUrl, jobId, name, brokerToken);
         rewritten.mcpServers![name] = { type: 'sse', url: brokerUrl };
 
-        const dedupeKey = `${name}:${entry.command}:${JSON.stringify(entry.args ?? [])}`;
+        const dedupeKey = `${name}:${entry.command}:${JSON.stringify(entry.args ?? [])}:${JSON.stringify(extractStringEnv(entry.env))}`;
         if (!seen.has(dedupeKey)) {
           seen.add(dedupeKey);
           const relativePath = path.relative(pluginCacheDir, filePath);
@@ -190,7 +188,7 @@ async function rewriteCodexConfig(
       const brokerUrl = buildBrokerSseUrl(brokerBaseUrl, jobId, name, brokerToken);
       rewrittenServers[name] = { url: brokerUrl };
 
-      const dedupeKey = `${name}:${entry.command}:${JSON.stringify(entry.args ?? [])}`;
+      const dedupeKey = `${name}:${entry.command}:${JSON.stringify(entry.args ?? [])}:${JSON.stringify(extractStringEnv(entry.env as Record<string, unknown> | undefined))}`;
       if (!seen.has(dedupeKey)) {
         seen.add(dedupeKey);
         manifest.push({

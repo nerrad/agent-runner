@@ -29,6 +29,9 @@ export interface RuntimeConfig {
   brokerUrl: string;
 }
 
+/** Home directory inside the worker Docker container. Must match the Dockerfile. */
+export const CONTAINER_HOME = '/home/agent-runner';
+
 export async function resolveDockerSocketPath(): Promise<string> {
   const candidatePaths = [
     process.env.AGENT_RUNNER_DOCKER_SOCKET,

@@ -279,15 +279,21 @@ async function authorizeMcpBrokerRequest(runtime: RuntimeContext, jobId: string,
   if (typeof token !== 'string' || !token.trim()) {
     throw new Error('Missing broker token');
   }
+  let leaseError: unknown;
   let valid = false;
   try {
     await runtime.brokerLeaseStore.validate(jobId, token);
     valid = true;
-  } catch {
-    // Try rename token
+  } catch (error) {
+    leaseError = error;
   }
   if (!valid) {
-    await runtime.brokerLeaseStore.validateRename(jobId, token);
+    try {
+      await runtime.brokerLeaseStore.validateRename(jobId, token);
+    } catch {
+      // Both validations failed — surface the original lease error
+      throw leaseError instanceof Error ? leaseError : new Error('Invalid broker token');
+    }
   }
   const record = await runtime.manager.getJob(jobId);
   if (!record) {
@@ -295,6 +301,9 @@ async function authorizeMcpBrokerRequest(runtime: RuntimeContext, jobId: string,
   }
   if ([ 'blocked', 'completed', 'failed', 'canceled' ].includes(record.status)) {
     throw new Error(`Broker access is not available after job ${record.status}`);
+  }
+  if (record.spec.agentStateMode !== 'mounted') {
+    throw new Error('MCP proxy is only available when agentStateMode is mounted');
   }
   return record;
 }

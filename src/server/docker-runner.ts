@@ -1,7 +1,7 @@
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { JobRecord } from '../shared/types.js';
-import type { RuntimeConfig } from './config.js';
+import { CONTAINER_HOME, type RuntimeConfig } from './config.js';
 import type { McpRewriteFileOverlay } from './mcp-rewriter.js';
 import { runCommand } from './process-utils.js';
 
@@ -62,7 +62,7 @@ export class DockerRunner {
     const containerName = `agent-runner-${request.job.id}`;
     const sshMountTarget = '/tmp/agent-runner-ssh.sock';
     const ghMountTarget = '/gh-config';
-    const containerHome = '/home/agent-runner';
+    const containerHome = CONTAINER_HOME;
     const { capabilityProfile, agentStateMode } = request.job.spec;
     const env = await this.resolveContainerEnv(request);
 

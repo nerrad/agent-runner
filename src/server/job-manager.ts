@@ -329,6 +329,7 @@ export class JobManager {
         );
         if (rewriteResult.manifest.length > 0) {
           mcpOverlays = rewriteResult.overlays;
+          // Fallback path handles records created before mcpManifestPath was added to ArtifactBundle
           await writeJsonAtomic(record.artifacts.mcpManifestPath ?? path.join(path.dirname(record.artifacts.logPath), 'mcp-manifest.json'), rewriteResult.manifest);
           await this.appendRunnerLogLine(logTarget,
             `MCP proxy: ${rewriteResult.manifest.length} server(s) rewritten [${rewriteResult.manifest.map((s) => s.name).join(', ')}]`);

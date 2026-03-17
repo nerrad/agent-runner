@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { appendFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Response } from 'express';
 import type { RuntimeConfig } from './config.js';
@@ -22,9 +22,11 @@ export interface McpServerStatus {
 }
 
 const CLEANUP_TIMEOUT_MS = 5_000;
+const MAX_STDOUT_BUFFER_BYTES = 1024 * 1024; // 1 MiB cap for incomplete lines
 
 export class McpBroker {
   private readonly processes = new Map<string, Map<string, McpProcessState>>();
+  private readonly pending = new Map<string, Promise<McpProcessState>>();
 
   constructor(private readonly config: RuntimeConfig) {}
 
@@ -40,11 +42,34 @@ export class McpBroker {
       return existing;
     }
 
+    // Prevent concurrent callers from spawning duplicate processes
+    const pendingKey = `${jobId}:${serverName}`;
+    const inflight = this.pending.get(pendingKey);
+    if (inflight) {
+      return inflight;
+    }
+
+    const promise = this.spawnProcess(jobId, serverName, jobProcesses);
+    this.pending.set(pendingKey, promise);
+    try {
+      return await promise;
+    } finally {
+      this.pending.delete(pendingKey);
+    }
+  }
+
+  private async spawnProcess(
+    jobId: string,
+    serverName: string,
+    jobProcesses: Map<string, McpProcessState>,
+  ): Promise<McpProcessState> {
     const manifest = await this.readManifest(jobId);
     const entry = manifest.find((e) => e.name === serverName);
     if (!entry) {
       throw new Error(`MCP server '${serverName}' not found in manifest for job ${jobId}`);
     }
+
+    const stderrLogPath = path.join(this.config.artifactsDir, jobId, `mcp-stderr-${serverName}.log`);
 
     const processEnv: NodeJS.ProcessEnv = {
       ...process.env,
@@ -68,6 +93,12 @@ export class McpBroker {
 
     child.stdout!.on('data', (data: Buffer) => {
       state.stdoutBuffer += data.toString();
+
+      // Cap the buffer to prevent unbounded memory growth from lines without newlines
+      if (state.stdoutBuffer.length > MAX_STDOUT_BUFFER_BYTES) {
+        state.stdoutBuffer = state.stdoutBuffer.slice(-MAX_STDOUT_BUFFER_BYTES);
+      }
+
       const lines = state.stdoutBuffer.split('\n');
       state.stdoutBuffer = lines.pop() ?? '';
 
@@ -86,16 +117,16 @@ export class McpBroker {
     });
 
     child.stderr!.on('data', (data: Buffer) => {
-      // Log stderr but don't forward to SSE clients
-      const text = data.toString().trim();
+      const text = data.toString();
       if (text.length > 0) {
-        // stderr from MCP server processes is informational; visible in host logs
+        appendFile(stderrLogPath, text).catch(() => undefined);
       }
     });
 
     child.on('exit', (code, signal) => {
       state.alive = false;
       const reason = signal ? `signal ${signal}` : `code ${code}`;
+      appendFile(stderrLogPath, `[mcp-broker] process exited (${reason})\n`).catch(() => undefined);
       for (const client of state.sseClients) {
         try {
           client.write(`event: error\ndata: ${JSON.stringify({ error: `MCP server '${serverName}' exited (${reason})` })}\n\n`);
@@ -109,6 +140,7 @@ export class McpBroker {
 
     child.on('error', (error) => {
       state.alive = false;
+      appendFile(stderrLogPath, `[mcp-broker] spawn error: ${error.message}\n`).catch(() => undefined);
       for (const client of state.sseClients) {
         try {
           client.write(`event: error\ndata: ${JSON.stringify({ error: `MCP server '${serverName}' error: ${error.message}` })}\n\n`);
