@@ -8,6 +8,7 @@ import { GitManager } from './git-manager.js';
 import { JobEvents } from './job-events.js';
 import { JobManager, type JobManagerOptions } from './job-manager.js';
 import { JobStore } from './job-store.js';
+import { McpBroker } from './mcp-broker.js';
 import { RepoBroker } from './repo-broker.js';
 import { SecurityAuditLogger } from './security-audit-log.js';
 
@@ -22,6 +23,7 @@ export interface RuntimeContext {
   brokerLeaseStore: BrokerLeaseStore;
   repoBroker: RepoBroker;
   dockerBroker: DockerBroker;
+  mcpBroker: McpBroker;
   securityAuditLogger: SecurityAuditLogger;
   manager: JobManager;
 }
@@ -36,6 +38,7 @@ export function createRuntime(config: RuntimeConfig, options: JobManagerOptions 
   const brokerLeaseStore = new BrokerLeaseStore(config);
   const repoBroker = new RepoBroker(config);
   const dockerBroker = new DockerBroker(config);
+  const mcpBroker = new McpBroker(config);
   const securityAuditLogger = new SecurityAuditLogger();
   const manager = new JobManager(
     config,
@@ -47,6 +50,7 @@ export function createRuntime(config: RuntimeConfig, options: JobManagerOptions 
     agentStateAuditor,
     brokerLeaseStore,
     dockerBroker,
+    mcpBroker,
     securityAuditLogger,
     options,
   );
@@ -62,6 +66,7 @@ export function createRuntime(config: RuntimeConfig, options: JobManagerOptions 
     brokerLeaseStore,
     repoBroker,
     dockerBroker,
+    mcpBroker,
     securityAuditLogger,
     manager,
   };

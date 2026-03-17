@@ -37,6 +37,7 @@ export function buildJobPaths(config: RuntimeConfig, jobId: string): JobPaths {
       outputsDir,
       agentStateSummaryPath: path.join(artifactDir, 'agent-state-summary.json'),
       agentStateDiffPath: path.join(artifactDir, 'agent-state.diff'),
+      mcpManifestPath: path.join(artifactDir, 'mcp-manifest.json'),
     },
   };
 }

@@ -143,6 +143,7 @@ test('broker app writes a security audit entry for blocked broker activity', asy
       },
     } as RuntimeContext['repoBroker'],
     dockerBroker: {} as RuntimeContext['dockerBroker'],
+    mcpBroker: {} as RuntimeContext['mcpBroker'],
     securityAuditLogger: new SecurityAuditLogger(),
     manager: {
       async getJob(jobId: string) {
@@ -226,6 +227,7 @@ test('broker app rename-branch endpoint updates record and returns success', asy
       },
     } as RuntimeContext['repoBroker'],
     dockerBroker: {} as RuntimeContext['dockerBroker'],
+    mcpBroker: {} as RuntimeContext['mcpBroker'],
     securityAuditLogger: new SecurityAuditLogger(),
     manager: {
       async getJob(jobId: string) {
@@ -304,6 +306,7 @@ test('broker app rename-branch endpoint does not update record on git failure', 
       },
     } as RuntimeContext['repoBroker'],
     dockerBroker: {} as RuntimeContext['dockerBroker'],
+    mcpBroker: {} as RuntimeContext['mcpBroker'],
     securityAuditLogger: new SecurityAuditLogger(),
     manager: {
       async getJob(jobId: string) {
@@ -381,6 +384,7 @@ test('broker app exposes wp-env commands for docker-broker jobs', async () => {
         };
       },
     } as RuntimeContext['dockerBroker'],
+    mcpBroker: {} as RuntimeContext['mcpBroker'],
     securityAuditLogger: new SecurityAuditLogger(),
     manager: {
       async getJob(jobId: string) {
@@ -459,6 +463,7 @@ test('broker app rename-branch endpoint succeeds for safe-profile job with renam
       },
     } as RuntimeContext['repoBroker'],
     dockerBroker: {} as RuntimeContext['dockerBroker'],
+    mcpBroker: {} as RuntimeContext['mcpBroker'],
     securityAuditLogger: new SecurityAuditLogger(),
     manager: {
       async getJob(jobId: string) {
@@ -514,6 +519,7 @@ test('broker app git-read endpoint rejects safe-profile job with rename-only tok
     } as RuntimeContext['brokerLeaseStore'],
     repoBroker: {} as RuntimeContext['repoBroker'],
     dockerBroker: {} as RuntimeContext['dockerBroker'],
+    mcpBroker: {} as RuntimeContext['mcpBroker'],
     securityAuditLogger: new SecurityAuditLogger(),
     manager: {
       async getJob(jobId: string) {
@@ -535,5 +541,156 @@ test('broker app git-read endpoint rejects safe-profile job with rename-only tok
     assert.equal(response.status, 400);
     const body = await response.json() as { error: string };
     assert.match(body.error, /Invalid broker lease/);
+  });
+});
+
+// ── MCP Broker Route Tests ──────────────────────────────────────────
+
+function createMcpRuntime(config: RuntimeConfig, record: JobRecord, overrides?: {
+  validate?: () => Promise<unknown>;
+  validateRename?: () => Promise<unknown>;
+  mcpBroker?: Partial<RuntimeContext['mcpBroker']>;
+}): RuntimeContext {
+  return {
+    config,
+    events: {} as RuntimeContext['events'],
+    store: {} as RuntimeContext['store'],
+    git: {} as RuntimeContext['git'],
+    docker: {} as RuntimeContext['docker'],
+    adapters: {} as RuntimeContext['adapters'],
+    agentStateAuditor: {} as RuntimeContext['agentStateAuditor'],
+    brokerLeaseStore: {
+      async validate() {
+        if (overrides?.validate) return overrides.validate();
+        return { jobId: record.id, token: 'valid-token', renameToken: 'rename-token' };
+      },
+      async validateRename() {
+        if (overrides?.validateRename) return overrides.validateRename();
+        return { jobId: record.id, token: 'valid-token', renameToken: 'rename-token' };
+      },
+    } as RuntimeContext['brokerLeaseStore'],
+    repoBroker: {} as RuntimeContext['repoBroker'],
+    dockerBroker: {} as RuntimeContext['dockerBroker'],
+    mcpBroker: {
+      async ensureProcess() { return { alive: true, pid: 123, name: 'test-server' }; },
+      handleSseConnection(_jobId: string, _serverName: string, res: import('express').Response) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.flushHeaders();
+        res.write('event: endpoint\ndata: http://example.com/message\n\n');
+        res.end();
+      },
+      async handleMessage() {},
+      getJobStatus() { return { servers: [{ name: 'test-server', pid: 123, alive: true }] }; },
+      ...overrides?.mcpBroker,
+    } as RuntimeContext['mcpBroker'],
+    securityAuditLogger: new SecurityAuditLogger(),
+    manager: {
+      async getJob(jobId: string) {
+        return jobId === record.id ? record : null;
+      },
+    } as RuntimeContext['manager'],
+  };
+}
+
+test('broker app MCP status endpoint returns server status', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-broker-mcp-status-'));
+  const config = createRuntimeConfig(root);
+  const record = createRecord(config);
+  await mkdir(path.dirname(record.artifacts.securityAuditPath), { recursive: true });
+
+  const runtime = createMcpRuntime(config, record);
+
+  await withServer(runtime, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/broker/jobs/${record.id}/mcp/status?token=valid-token`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as { servers: Array<{ name: string; alive: boolean }> };
+    assert.equal(body.servers.length, 1);
+    assert.equal(body.servers[0].name, 'test-server');
+    assert.ok(body.servers[0].alive);
+  });
+});
+
+test('broker app MCP message endpoint accepts JSON-RPC and returns 202', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-broker-mcp-msg-'));
+  const config = createRuntimeConfig(root);
+  const record = createRecord(config);
+  await mkdir(path.dirname(record.artifacts.securityAuditPath), { recursive: true });
+
+  let receivedBody: unknown = null;
+  const runtime = createMcpRuntime(config, record, {
+    mcpBroker: {
+      async handleMessage(_jobId: string, _serverName: string, body: unknown) {
+        receivedBody = body;
+      },
+    },
+  });
+
+  await withServer(runtime, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/broker/jobs/${record.id}/mcp/test-server/message?token=valid-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'initialize', id: 1 }),
+    });
+    assert.equal(response.status, 202);
+    const body = await response.json() as { ok: boolean };
+    assert.ok(body.ok);
+    assert.deepEqual(receivedBody, { jsonrpc: '2.0', method: 'initialize', id: 1 });
+  });
+});
+
+test('broker app MCP auth accepts rename token when full lease token fails', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-broker-mcp-rename-'));
+  const config = createRuntimeConfig(root);
+  const record = createRecord(config);
+  await mkdir(path.dirname(record.artifacts.securityAuditPath), { recursive: true });
+
+  const runtime = createMcpRuntime(config, record, {
+    validate: () => { throw new Error('Invalid lease'); },
+  });
+
+  await withServer(runtime, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/broker/jobs/${record.id}/mcp/status?token=rename-token`);
+    assert.equal(response.status, 200);
+  });
+});
+
+test('broker app MCP auth rejects when both lease and rename tokens fail', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-broker-mcp-reject-'));
+  const config = createRuntimeConfig(root);
+  const record = createRecord(config);
+  await mkdir(path.dirname(record.artifacts.securityAuditPath), { recursive: true });
+
+  const runtime = createMcpRuntime(config, record, {
+    validate: () => { throw new Error('Invalid lease'); },
+    validateRename: () => { throw new Error('Invalid rename token'); },
+  });
+
+  await withServer(runtime, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/broker/jobs/${record.id}/mcp/status?token=bad-token`);
+    assert.equal(response.status, 400);
+    const body = await response.json() as { error: string };
+    assert.match(body.error, /Invalid lease/);
+  });
+});
+
+test('broker app MCP rejects when agentStateMode is not mounted', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-broker-mcp-statemode-'));
+  const config = createRuntimeConfig(root);
+  const record = {
+    ...createRecord(config),
+    spec: {
+      ...createRecord(config).spec,
+      agentStateMode: 'none' as const,
+    },
+  };
+  await mkdir(path.dirname(record.artifacts.securityAuditPath), { recursive: true });
+
+  const runtime = createMcpRuntime(config, record);
+
+  await withServer(runtime, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/broker/jobs/${record.id}/mcp/status?token=valid-token`);
+    assert.equal(response.status, 400);
+    const body = await response.json() as { error: string };
+    assert.match(body.error, /agentStateMode/);
   });
 });

@@ -1,7 +1,8 @@
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { JobRecord } from '../shared/types.js';
-import type { RuntimeConfig } from './config.js';
+import { CONTAINER_HOME, type RuntimeConfig } from './config.js';
+import type { McpRewriteFileOverlay } from './mcp-rewriter.js';
 import { runCommand } from './process-utils.js';
 
 export interface DockerRunRequest {
@@ -10,6 +11,7 @@ export interface DockerRunRequest {
   env: Record<string, string>;
   onLog: (chunk: string) => Promise<void> | void;
   onStart?: (containerId: string) => Promise<void> | void;
+  mcpOverlays?: McpRewriteFileOverlay[];
 }
 
 export class DockerRunner {
@@ -60,7 +62,7 @@ export class DockerRunner {
     const containerName = `agent-runner-${request.job.id}`;
     const sshMountTarget = '/tmp/agent-runner-ssh.sock';
     const ghMountTarget = '/gh-config';
-    const containerHome = '/home/agent-runner';
+    const containerHome = CONTAINER_HOME;
     const { capabilityProfile, agentStateMode } = request.job.spec;
     const env = await this.resolveContainerEnv(request);
 
@@ -114,6 +116,12 @@ export class DockerRunner {
       dockerArgs.push('--mount', `type=bind,src=${this.config.claudeDir},dst=${containerHome}/.claude`);
       dockerArgs.push('--mount', `type=bind,src=${this.config.claudeSettingsPath},dst=${containerHome}/.claude.json`);
       dockerArgs.push('--mount', `type=bind,src=${this.config.codexDir},dst=${containerHome}/.codex`);
+    }
+
+    if (request.mcpOverlays) {
+      for (const overlay of request.mcpOverlays) {
+        dockerArgs.push('--mount', `type=bind,src=${overlay.hostStagingPath},dst=${overlay.containerTargetPath},readonly`);
+      }
     }
 
     if (capabilityProfile === 'dangerous' && this.config.sshAuthSock) {
