@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import process from 'node:process';
-import { runWithBrokerService } from './broker-service.js';
+import { ensureBrokerService } from './broker-service.js';
 import { loadRuntimeConfig } from './config.js';
 import { parseCliArgs, normalizeRunSpec, formatJobSummary, helpText, defaultSkillTargets, resolveSkillTargetRoot } from './cli-utils.js';
 import { runInit } from './init.js';
@@ -10,7 +10,15 @@ import { installSkills } from './skill-installer.js';
 async function main(): Promise<void> {
   const command = parseCliArgs(process.argv.slice(2));
   const config = await loadRuntimeConfig();
-  const runtime = createRuntime(config, command.command === 'internal-run' ? { runMode: 'inline' } : {});
+  // For internal-run, provide ensureBroker so the broker is started inside
+  // the job lock — not before it — preventing a stale-broker race when
+  // multiple jobs are queued concurrently.
+  // eslint-disable-next-line prefer-const -- closure must capture the binding before assignment
+  let runtime: ReturnType<typeof createRuntime>;
+  runtime = createRuntime(config, command.command === 'internal-run' ? {
+    runMode: 'inline' as const,
+    ensureBroker: () => ensureBrokerService(runtime),
+  } : {});
 
   switch (command.command) {
     case 'init': {
@@ -72,9 +80,7 @@ async function main(): Promise<void> {
       return;
     }
     case 'internal-run': {
-      await runWithBrokerService(runtime, command.jobId, async () => {
-        await runtime.manager.runJob(command.jobId);
-      });
+      await runtime.manager.runJob(command.jobId);
       return;
     }
     default:

@@ -27,11 +27,19 @@ const TERMINAL_STATUSES = new Set<JobStatus>([ 'blocked', 'completed', 'failed',
 const RUNNER_LOG_PREFIX = '[agent-runner]';
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 
+export interface BrokerHandle {
+  close(): Promise<void>;
+}
+
 export interface JobManagerOptions {
   runMode?: 'inline' | 'process';
   launchJobRunner?: (jobId: string) => Promise<void>;
   heartbeatIntervalMs?: number;
   debugPollIntervalMs?: number;
+  /** Called inside the job lock to ensure the broker is reachable before the
+   *  container starts.  This avoids the race where a broker checked *before*
+   *  the lock may have been shut down by the time the job actually runs. */
+  ensureBroker?: () => Promise<BrokerHandle>;
 }
 
 interface JobLockPayload {
@@ -80,6 +88,7 @@ export class JobManager {
   private readonly launchJobRunner: (jobId: string) => Promise<void>;
   private readonly heartbeatIntervalMs: number;
   private readonly debugPollIntervalMs: number;
+  private readonly ensureBroker?: () => Promise<BrokerHandle>;
 
   constructor(
     private readonly config: RuntimeConfig,
@@ -100,6 +109,7 @@ export class JobManager {
     this.launchJobRunner = options.launchJobRunner ?? ((jobId) => launchDetachedJobRunner(this.config, jobId));
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
     this.debugPollIntervalMs = options.debugPollIntervalMs ?? 500;
+    this.ensureBroker = options.ensureBroker;
   }
 
   async createJob(input: JobSpec): Promise<JobRecord> {
@@ -211,7 +221,14 @@ export class JobManager {
       return;
     }
 
+    // Ensure the broker is reachable *after* acquiring the lock.  A broker
+    // detected before the lock may have been shut down by the previous job's
+    // process, so we (re-)start one here where it is guaranteed to survive
+    // for the duration of this job.
+    let broker: BrokerHandle | undefined;
     try {
+      broker = await this.ensureBroker?.();
+
       const record = await this.requireJob(jobId);
       if (TERMINAL_STATUSES.has(record.status)) {
         await this.cleanupBrokeredDockerResources(record);
@@ -237,6 +254,7 @@ export class JobManager {
         await this.cleanupMcpProcesses(jobId);
       }
     } finally {
+      await broker?.close();
       await this.releaseJobSlot(lock);
     }
   }
