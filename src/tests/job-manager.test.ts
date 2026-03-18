@@ -13,7 +13,7 @@ import { DockerBroker } from '../server/docker-broker.js';
 import { McpBroker } from '../server/mcp-broker.js';
 import { JobStore } from '../server/job-store.js';
 import { JobEvents } from '../server/job-events.js';
-import type { JobManagerOptions } from '../server/job-manager.js';
+import type { BrokerHandle, JobManagerOptions } from '../server/job-manager.js';
 import { JobManager } from '../server/job-manager.js';
 import { SecurityAuditLogger } from '../server/security-audit-log.js';
 import { AgentAdapters } from '../server/agent-adapters.js';
@@ -778,6 +778,102 @@ test('job manager does not pass proxy env for github.com jobs', async () => {
 
   assert.equal(git.lastCloneEnv, undefined, 'cloneRepository should not receive proxy env for github.com');
   assert.equal(git.lastDefaultBranchEnv, undefined, 'getDefaultBranch should not receive proxy env for github.com');
+
+  clearAuthEnv();
+});
+
+test('runJob calls ensureBroker after acquiring lock and broker.close() in finally', async () => {
+  clearAuthEnv();
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-broker-lifecycle-'));
+  const docker = new MockDockerRunner();
+  const callOrder: string[] = [];
+  const mockBroker: BrokerHandle = {
+    async close() { callOrder.push('broker.close'); },
+  };
+  const { manager, store } = createManager(createRuntimeConfig(root), docker, {
+    ensureBroker: async () => {
+      callOrder.push('ensureBroker');
+      return mockBroker;
+    },
+  });
+
+  const job = await createJob(manager, 'claude');
+  await waitForJob(store, job.id, [ 'completed' ]);
+
+  assert.ok(callOrder.includes('ensureBroker'), 'ensureBroker should be called');
+  assert.ok(callOrder.includes('broker.close'), 'broker.close should be called');
+  assert.ok(
+    callOrder.indexOf('ensureBroker') < callOrder.indexOf('broker.close'),
+    'ensureBroker should be called before broker.close',
+  );
+
+  clearAuthEnv();
+});
+
+test('runJob fails gracefully and releases lock when ensureBroker throws', async () => {
+  clearAuthEnv();
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-broker-throw-'));
+  const docker = new MockDockerRunner();
+  const config = createRuntimeConfig(root);
+  const { manager, store } = createManager(config, docker, {
+    ensureBroker: async () => {
+      throw new Error('Broker unavailable');
+    },
+  });
+
+  const job = await createJob(manager, 'claude');
+  const failed = await waitForJob(store, job.id, [ 'failed' ]);
+
+  assert.equal(failed.status, 'failed');
+  assert.match(failed.blockerReason ?? '', /Broker unavailable/);
+  assert.equal(docker.runCount, 0, 'docker should not have been invoked');
+  assert.equal(await pathExists(path.join(config.appDir, 'active-job.lock')), false, 'lock should be released');
+
+  clearAuthEnv();
+});
+
+test('runJob releases lock even when broker.close() throws', async () => {
+  clearAuthEnv();
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-broker-close-throw-'));
+  const docker = new MockDockerRunner();
+  const config = createRuntimeConfig(root);
+  const { manager, store } = createManager(config, docker, {
+    ensureBroker: async () => ({
+      async close() { throw new Error('close kaboom'); },
+    }),
+  });
+
+  const job = await createJob(manager, 'claude');
+  await waitForJob(store, job.id, [ 'completed' ]);
+
+  // broker.close() threw, but the lock must still be released.
+  assert.equal(
+    await pathExists(path.join(config.appDir, 'active-job.lock')),
+    false,
+    'lock should be released even when broker.close() throws',
+  );
+
+  clearAuthEnv();
+});
+
+test('runJob works when ensureBroker is not provided', async () => {
+  clearAuthEnv();
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-no-broker-'));
+  const docker = new MockDockerRunner();
+  const { manager, store } = createManager(createRuntimeConfig(root), docker);
+
+  const job = await createJob(manager, 'claude');
+  const finished = await waitForJob(store, job.id, [ 'completed' ]);
+
+  assert.equal(finished.status, 'completed');
 
   clearAuthEnv();
 });

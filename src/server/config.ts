@@ -135,9 +135,11 @@ export function buildHostGitEnv(config: RuntimeConfig, githubHost: GitHubHost): 
     HOME: process.env.HOME,
     USER: process.env.USER,
     SSH_AUTH_SOCK: process.env.SSH_AUTH_SOCK,
-    GH_TOKEN: process.env.GH_TOKEN,
-    GITHUB_TOKEN: process.env.GITHUB_TOKEN,
     HTTPS_PROXY: proxyUrl,
+    // GH_TOKEN / GITHUB_TOKEN are intentionally excluded: they are typically
+    // github.com tokens and would override per-host auth when gh targets an
+    // enterprise host.  Omitting them lets gh fall back to its per-host
+    // config (~/.config/gh/hosts.yml).
   };
   return env;
 }
