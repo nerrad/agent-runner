@@ -4,6 +4,7 @@ import { stat } from 'node:fs/promises';
 import type { AgentEffort, AgentRuntime, GitHubHost, JobRecord, JobSpec } from '../shared/types.js';
 import type { RuntimeConfig } from './config.js';
 import { GitManager } from './git-manager.js';
+import { validateModel } from './model-validator.js';
 
 export type CliCommand =
   | {
@@ -223,6 +224,9 @@ export async function normalizeRunSpec(
   git = new GitManager(),
 ): Promise<NormalizedRunSpec> {
   const repoAccess = normalizeRepoAccess(command.profile, command.repoAccess);
+  if (command.model) {
+    await validateModel(command.model, command.runtime);
+  }
   if (looksLikeGitUrl(command.repo)) {
     const specPath = path.isAbsolute(command.spec)
       ? await resolveAbsoluteSpecPath(command.spec, config.specRoot)
