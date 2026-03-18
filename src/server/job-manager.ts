@@ -254,7 +254,15 @@ export class JobManager {
         await this.cleanupMcpProcesses(jobId);
       }
     } finally {
-      await broker?.close();
+      // broker.close() is safe here because jobs execute sequentially (one lock
+      // at a time).  A broker started by this job won't be shared with the next
+      // job — the next job's ensureBroker call happens after it acquires the
+      // lock, which happens after we release it below.
+      try {
+        await broker?.close();
+      } catch {
+        // Broker shutdown failure must not prevent lock release.
+      }
       await this.releaseJobSlot(lock);
     }
   }

@@ -387,14 +387,17 @@ test('repo broker does not pass GH_TOKEN to enterprise gh commands', async () =>
     await broker.openPr(createEnterpriseJobRecord(), { title: 'Test PR' });
     assert.ok(capturedEnvs[0]);
     assert.equal(capturedEnvs[0].GH_HOST, 'github.a8c.com');
+    assert.equal(capturedEnvs[0].HTTPS_PROXY, 'socks5://127.0.0.1:8080', 'HTTPS_PROXY should still be present');
     assert.equal(capturedEnvs[0].GH_TOKEN, undefined, 'GH_TOKEN should not be in enterprise env');
     assert.equal(capturedEnvs[0].GITHUB_TOKEN, undefined, 'GITHUB_TOKEN should not be in enterprise env');
 
     await broker.runGhRead(createEnterpriseJobRecord(), [ 'repo', 'view' ]);
     assert.equal(capturedEnvs[1]?.GH_TOKEN, undefined, 'GH_TOKEN should not be in enterprise gh-read env');
+    assert.equal(capturedEnvs[1]?.HTTPS_PROXY, 'socks5://127.0.0.1:8080', 'HTTPS_PROXY should still be present for gh-read');
 
     await broker.commentPr(createEnterpriseJobRecord(), { pr: '42', body: 'LGTM' });
     assert.equal(capturedEnvs[2]?.GH_TOKEN, undefined, 'GH_TOKEN should not be in enterprise comment-pr env');
+    assert.equal(capturedEnvs[2]?.HTTPS_PROXY, 'socks5://127.0.0.1:8080', 'HTTPS_PROXY should still be present for comment-pr');
   } finally {
     if (originalGhToken !== undefined) {
       process.env.GH_TOKEN = originalGhToken;
@@ -405,6 +408,32 @@ test('repo broker does not pass GH_TOKEN to enterprise gh commands', async () =>
       process.env.GITHUB_TOKEN = originalGithubToken;
     } else {
       delete process.env.GITHUB_TOKEN;
+    }
+  }
+});
+
+test('repo broker github.com commands inherit process.env (including GH_TOKEN)', async () => {
+  const originalGhToken = process.env.GH_TOKEN;
+  process.env.GH_TOKEN = 'ghp_github_com_token';
+  try {
+    const capturedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+    const broker = new RepoBroker(testConfig, async (_command, _args, options = {}) => {
+      capturedEnvs.push(options.env);
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+
+    await broker.openPr(createJobRecord(), { title: 'Test PR' });
+    // github.com commands should use process.env (no custom env override),
+    // so GH_TOKEN is inherited naturally.
+    assert.equal(capturedEnvs[0]?.GH_TOKEN, 'ghp_github_com_token',
+      'GH_TOKEN should be inherited from process.env for github.com');
+    assert.equal(capturedEnvs[0]?.HTTPS_PROXY, undefined,
+      'HTTPS_PROXY should not be set for github.com');
+  } finally {
+    if (originalGhToken !== undefined) {
+      process.env.GH_TOKEN = originalGhToken;
+    } else {
+      delete process.env.GH_TOKEN;
     }
   }
 });
