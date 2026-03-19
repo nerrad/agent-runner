@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
-import { formatJobSummary, normalizeRunSpec, parseCliArgs, resolveSkillTargetRoot } from '../server/cli-utils.js';
+import { extractGitHubHost, formatJobSummary, normalizeRunSpec, parseCliArgs, resolveSkillTargetRoot } from '../server/cli-utils.js';
 import { runCommand } from '../server/process-utils.js';
 import type { RuntimeConfig } from '../server/config.js';
 
@@ -95,7 +95,7 @@ test('parseCliArgs parses --branch flag', () => {
     runtime: 'claude',
     model: undefined,
     effort: 'auto',
-    host: 'github.com',
+    host: undefined,
     ref: undefined,
     branch: 'feature/my-branch',
     detach: false,
@@ -103,6 +103,61 @@ test('parseCliArgs parses --branch flag', () => {
     repoAccess: undefined,
     agentState: 'mounted',
   });
+});
+
+test('extractGitHubHost derives host from various URL formats', () => {
+  assert.equal(extractGitHubHost('git@github.com:owner/repo.git'), 'github.com');
+  assert.equal(extractGitHubHost('git@github.a8c.com:owner/repo.git'), 'github.a8c.com');
+  assert.equal(extractGitHubHost('https://github.com/owner/repo.git'), 'github.com');
+  assert.equal(extractGitHubHost('https://github.a8c.com/owner/repo.git'), 'github.a8c.com');
+  assert.equal(extractGitHubHost('ssh://git@github.a8c.com/owner/repo.git'), 'github.a8c.com');
+  assert.equal(extractGitHubHost('not-a-url'), 'github.com');
+});
+
+test('normalizeRunSpec auto-derives githubHost from enterprise repo URL', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-cli-ghe-'));
+  const specRoot = path.join(root, 'specs');
+  await mkdir(specRoot, { recursive: true });
+  const planPath = path.join(specRoot, 'plan.md');
+  await writeFile(planPath, '# Plan\n', 'utf8');
+  const config = createRuntimeConfig(root);
+
+  const normalized = await normalizeRunSpec({
+    command: 'run',
+    repo: 'git@github.a8c.com:Automattic/biff.git',
+    spec: planPath,
+    runtime: 'claude',
+    effort: 'auto',
+    // host intentionally omitted — should be auto-detected
+    detach: false,
+    profile: 'repo-broker',
+    agentState: 'mounted',
+  }, config);
+
+  assert.equal(normalized.jobSpec.githubHost, 'github.a8c.com');
+});
+
+test('normalizeRunSpec explicit --host overrides URL auto-detection', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-cli-host-override-'));
+  const specRoot = path.join(root, 'specs');
+  await mkdir(specRoot, { recursive: true });
+  const planPath = path.join(specRoot, 'plan.md');
+  await writeFile(planPath, '# Plan\n', 'utf8');
+  const config = createRuntimeConfig(root);
+
+  const normalized = await normalizeRunSpec({
+    command: 'run',
+    repo: 'git@github.a8c.com:Automattic/biff.git',
+    spec: planPath,
+    runtime: 'claude',
+    effort: 'auto',
+    host: 'custom.github.example.com',
+    detach: false,
+    profile: 'repo-broker',
+    agentState: 'mounted',
+  }, config);
+
+  assert.equal(normalized.jobSpec.githubHost, 'custom.github.example.com');
 });
 
 test('normalizeRunSpec flows branch through to jobSpec', async () => {
