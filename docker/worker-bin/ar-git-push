@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+usage() {
   cat <<'USAGE'
 Usage: ar-git-push [--remote <name>] [--branch <name>]
        ar-git-push [remote] [branch]
@@ -13,19 +13,26 @@ Options:
   --branch   Branch to push (default: current branch)
   --help, -h Show this help
 USAGE
-  exit 0
-fi
+}
+
+require_arg() {
+  if [[ $# -lt 2 || "${2:-}" == -* ]]; then
+    echo "Error: $1 requires a value" >&2
+    exit 1
+  fi
+}
 
 JOB_ID="$(ar-broker-env AGENT_RUNNER_JOB_ID)"
 REMOTE="origin"
 BRANCH=""
 
-if [[ ${1:-} == -* ]]; then
+if [[ "${1:-}" == -* ]]; then
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --remote)  REMOTE="$2"; shift 2 ;;
-      --branch)  BRANCH="$2"; shift 2 ;;
-      *) shift ;;
+      --help|-h)   usage; exit 0 ;;
+      --remote)    require_arg "$1" "${2:-}"; REMOTE="$2"; shift 2 ;;
+      --branch)    require_arg "$1" "${2:-}"; BRANCH="$2"; shift 2 ;;
+      *) echo "Error: unknown option: $1" >&2; usage >&2; exit 1 ;;
     esac
   done
 else

@@ -117,7 +117,7 @@ export class GitManager {
     return true;
   }
 
-  private excludeWritten = false;
+  private excludeWrittenFor = new Set<string>();
 
   private static readonly EXCLUDE_PATTERNS = [
     '.pnpm-store',
@@ -126,7 +126,7 @@ export class GitManager {
   ];
 
   async ensureExcludePatterns(workspacePath: string): Promise<void> {
-    if (this.excludeWritten) {
+    if (this.excludeWrittenFor.has(workspacePath)) {
       return;
     }
 
@@ -149,7 +149,7 @@ export class GitManager {
       await appendFile(excludePath, suffix, 'utf8');
     }
 
-    this.excludeWritten = true;
+    this.excludeWrittenFor.add(workspacePath);
   }
 
   async writeDiff(workspacePath: string, targetPath: string): Promise<void> {

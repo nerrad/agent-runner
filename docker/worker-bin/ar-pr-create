@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+usage() {
   cat <<'USAGE'
 Usage: ar-pr-create --title "..." --body "..." [--base <branch>] [--head <branch>]
        ar-pr-create <title> [body] [base] [head]
@@ -16,8 +16,25 @@ Options:
   --head          Head branch for the PR
   --help, -h      Show this help
 USAGE
-  exit 0
-fi
+}
+
+require_arg() {
+  if [[ $# -lt 2 || "${2:-}" == -* ]]; then
+    echo "Error: $1 requires a value" >&2
+    exit 1
+  fi
+}
+
+require_file() {
+  if [[ $# -lt 2 || "${2:-}" == -* ]]; then
+    echo "Error: $1 requires a file path" >&2
+    exit 1
+  fi
+  if [[ ! -r "$2" ]]; then
+    echo "Error: $1: file not found or not readable: $2" >&2
+    exit 1
+  fi
+}
 
 JOB_ID="$(ar-broker-env AGENT_RUNNER_JOB_ID)"
 TITLE=""
@@ -25,15 +42,16 @@ BODY=""
 BASE=""
 HEAD=""
 
-if [[ ${1:-} == -* ]]; then
+if [[ "${1:-}" == -* ]]; then
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --title|-t)    TITLE="$2"; shift 2 ;;
-      --body|-b)     BODY="$2"; shift 2 ;;
-      --body-file|-F) BODY="$(cat "$2")"; shift 2 ;;
-      --base)        BASE="$2"; shift 2 ;;
-      --head)        HEAD="$2"; shift 2 ;;
-      *) shift ;;
+      --help|-h)     usage; exit 0 ;;
+      --title|-t)    require_arg "$1" "${2:-}"; TITLE="$2"; shift 2 ;;
+      --body|-b)     require_arg "$1" "${2:-}"; BODY="$2"; shift 2 ;;
+      --body-file|-F) require_file "$1" "${2:-}"; BODY="$(cat "$2")"; shift 2 ;;
+      --base)        require_arg "$1" "${2:-}"; BASE="$2"; shift 2 ;;
+      --head)        require_arg "$1" "${2:-}"; HEAD="$2"; shift 2 ;;
+      *) echo "Error: unknown option: $1" >&2; usage >&2; exit 1 ;;
     esac
   done
 else

@@ -290,7 +290,7 @@ function assertWritableBranch(record: JobRecord, branchName: string): void {
   }
 
   if (!isValidBranchName(branchName)) {
-    throw new Error(`Invalid branch name for --head: ${branchName}. Expected a git branch name like "feat/my-feature".`);
+    throw new Error(`Invalid branch name: "${branchName}". Expected a git branch name like "feat/my-feature".`);
   }
 
   if (!record.defaultBranch) {
