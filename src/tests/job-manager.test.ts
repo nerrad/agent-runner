@@ -17,6 +17,7 @@ import type { BrokerHandle, JobManagerOptions } from '../server/job-manager.js';
 import { JobManager } from '../server/job-manager.js';
 import { SecurityAuditLogger } from '../server/security-audit-log.js';
 import { AgentAdapters } from '../server/agent-adapters.js';
+import { SleepGuard } from '../server/sleep-guard.js';
 
 const AUTH_ENV_KEYS = [
   'ANTHROPIC_API_KEY',
@@ -255,9 +256,11 @@ function createManager(
   config: RuntimeConfig,
   docker: MockDockerRunner,
   options: JobManagerOptions = {},
-): { manager: JobManager; store: JobStore; events: JobEvents } {
+  overrides?: { sleepGuard?: SleepGuard },
+): { manager: JobManager; store: JobStore; events: JobEvents; sleepGuard: SleepGuard } {
   const store = new JobStore(config);
   const events = new JobEvents();
+  const sleepGuard = overrides?.sleepGuard ?? new SleepGuard('linux');
   const manager = new JobManager(
     config,
     store,
@@ -270,13 +273,14 @@ function createManager(
     new DockerBroker(config),
     new McpBroker(config),
     new SecurityAuditLogger(),
+    sleepGuard,
     {
       runMode: 'inline',
       ...options,
     },
   );
 
-  return { manager, store, events };
+  return { manager, store, events, sleepGuard };
 }
 
 async function waitForJob(
@@ -427,6 +431,7 @@ test('job manager writes branchSource convention when agent renames branch durin
     new DockerBroker(config),
     new McpBroker(config),
     new SecurityAuditLogger(),
+    new SleepGuard('linux'),
     { runMode: 'inline' },
   );
 
@@ -723,6 +728,7 @@ test('job manager forwards proxy env to git clone and getDefaultBranch for enter
     new DockerBroker(config),
     new McpBroker(config),
     new SecurityAuditLogger(),
+    new SleepGuard('linux'),
     { runMode: 'inline' },
   );
 
@@ -772,6 +778,7 @@ test('job manager does not pass proxy env for github.com jobs', async () => {
     new DockerBroker(config),
     new McpBroker(config),
     new SecurityAuditLogger(),
+    new SleepGuard('linux'),
     { runMode: 'inline' },
   );
 
@@ -879,6 +886,76 @@ test('runJob works when ensureBroker is not provided', async () => {
   const finished = await waitForJob(store, job.id, [ 'completed' ]);
 
   assert.equal(finished.status, 'completed');
+
+  clearAuthEnv();
+});
+
+test('sleep guard acquire/release called in runJob', async () => {
+  clearAuthEnv();
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-sleep-guard-'));
+  const docker = new MockDockerRunner();
+  const sleepGuard = new SleepGuard('linux');
+  const { manager, store } = createManager(createRuntimeConfig(root), docker, {}, { sleepGuard });
+
+  const job = await createJob(manager, 'claude');
+  await waitForJob(store, job.id, [ 'completed' ]);
+
+  // After job completes, refcount should be back to zero.
+  assert.equal(sleepGuard.refs, 0, 'sleep guard refs should be zero after job completes');
+
+  clearAuthEnv();
+});
+
+test('proxy health check failure at job start fails the job with blocker reason', async () => {
+  clearAuthEnv();
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-proxy-fail-'));
+  const docker = new MockDockerRunner();
+  const git = new MockGitManager();
+  const config = {
+    ...createRuntimeConfig(root),
+    // Point at a port that is not listening — proxy health check should fail.
+    githubProxyUrl: 'socks5://127.0.0.1:19',
+  };
+  const store = new JobStore(config);
+  const events = new JobEvents();
+  const manager = new JobManager(
+    config,
+    store,
+    events,
+    git as never,
+    docker as never,
+    new AgentAdapters(),
+    new AgentStateAuditor(config),
+    new BrokerLeaseStore(config),
+    new DockerBroker(config),
+    new McpBroker(config),
+    new SecurityAuditLogger(),
+    new SleepGuard('linux'),
+    { runMode: 'inline' },
+  );
+
+  const job = await manager.createJob({
+    repoUrl: 'git@github.a8c.com:owner/repo.git',
+    specPath: 'agent-os/specs/example',
+    agentRuntime: 'claude',
+    effort: 'auto',
+    githubHost: 'github.a8c.com',
+    commitOnStop: true,
+    wpEnvEnabled: true,
+    capabilityProfile: 'dangerous',
+    repoAccessMode: 'ambient',
+    agentStateMode: 'mounted',
+  });
+
+  const failed = await waitForJob(store, job.id, [ 'failed' ]);
+
+  assert.equal(failed.status, 'failed');
+  assert.match(failed.blockerReason ?? '', /SOCKS proxy.*unreachable/);
+  assert.equal(docker.runCount, 0, 'docker should not have been invoked');
 
   clearAuthEnv();
 });

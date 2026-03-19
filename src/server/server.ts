@@ -28,6 +28,7 @@ async function main(): Promise<void> {
   }
 
   const shutdown = async () => {
+    runtime.sleepGuard.dispose();
     await broker.close().catch(() => undefined);
     await new Promise<void>((resolve, reject) => {
       appServer.close((error) => {

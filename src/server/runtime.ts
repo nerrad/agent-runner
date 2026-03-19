@@ -11,6 +11,7 @@ import { JobStore } from './job-store.js';
 import { McpBroker } from './mcp-broker.js';
 import { RepoBroker } from './repo-broker.js';
 import { SecurityAuditLogger } from './security-audit-log.js';
+import { SleepGuard } from './sleep-guard.js';
 
 export interface RuntimeContext {
   config: RuntimeConfig;
@@ -25,6 +26,7 @@ export interface RuntimeContext {
   dockerBroker: DockerBroker;
   mcpBroker: McpBroker;
   securityAuditLogger: SecurityAuditLogger;
+  sleepGuard: SleepGuard;
   manager: JobManager;
 }
 
@@ -40,6 +42,7 @@ export function createRuntime(config: RuntimeConfig, options: JobManagerOptions 
   const dockerBroker = new DockerBroker(config);
   const mcpBroker = new McpBroker(config);
   const securityAuditLogger = new SecurityAuditLogger();
+  const sleepGuard = new SleepGuard();
   const manager = new JobManager(
     config,
     store,
@@ -52,6 +55,7 @@ export function createRuntime(config: RuntimeConfig, options: JobManagerOptions 
     dockerBroker,
     mcpBroker,
     securityAuditLogger,
+    sleepGuard,
     options,
   );
 
@@ -68,6 +72,7 @@ export function createRuntime(config: RuntimeConfig, options: JobManagerOptions 
     dockerBroker,
     mcpBroker,
     securityAuditLogger,
+    sleepGuard,
     manager,
   };
 }
