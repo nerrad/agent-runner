@@ -286,8 +286,9 @@ export class JobManager {
       : null;
     let agentStateAudit: AgentStateAuditResult | null = null;
 
-    if (profile.proxyUrl) {
+    if (profile.proxyUrl && record.spec.repoAccessMode === 'ambient') {
       runtimeEnv.HTTPS_PROXY = profile.proxyUrl;
+      runtimeEnv.NO_PROXY = 'api.anthropic.com';
     }
 
     const hostProxyEnv = buildHostGitEnv(this.config, record.spec.githubHost);
