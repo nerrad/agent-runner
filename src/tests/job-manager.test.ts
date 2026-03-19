@@ -50,6 +50,8 @@ class MockGitManager {
   }
   async getHeadSha(): Promise<string> { return this.headSha; }
   async getChangedFiles(): Promise<string[]> { return this.changedFiles; }
+  public ensureExcludePatternsCalled = false;
+  async ensureExcludePatterns(): Promise<void> { this.ensureExcludePatternsCalled = true; }
   async commitAll(): Promise<boolean> { return true; }
   async getCurrentBranch(): Promise<string> { return this.currentBranch; }
 }
@@ -789,8 +791,10 @@ test('runJob calls ensureBroker after acquiring lock and broker.close() in final
   const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-broker-lifecycle-'));
   const docker = new MockDockerRunner();
   const callOrder: string[] = [];
+  let resolveBrokerClosed: () => void;
+  const brokerClosed = new Promise<void>((resolve) => { resolveBrokerClosed = resolve; });
   const mockBroker: BrokerHandle = {
-    async close() { callOrder.push('broker.close'); },
+    async close() { callOrder.push('broker.close'); resolveBrokerClosed(); },
   };
   const { manager, store } = createManager(createRuntimeConfig(root), docker, {
     ensureBroker: async () => {
@@ -801,6 +805,7 @@ test('runJob calls ensureBroker after acquiring lock and broker.close() in final
 
   const job = await createJob(manager, 'claude');
   await waitForJob(store, job.id, [ 'completed' ]);
+  await brokerClosed;
 
   assert.ok(callOrder.includes('ensureBroker'), 'ensureBroker should be called');
   assert.ok(callOrder.includes('broker.close'), 'broker.close should be called');

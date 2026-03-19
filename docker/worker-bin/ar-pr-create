@@ -1,9 +1,65 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: ar-pr-create --title "..." --body "..." [--base <branch>] [--head <branch>]
+       ar-pr-create <title> [body] [base] [head]
+
+Create a pull request via the agent-runner broker.
+
+Options:
+  --title, -t     PR title (required)
+  --body, -b      PR body / description
+  --body-file, -F Read body from a file
+  --base          Base branch for the PR
+  --head          Head branch for the PR
+  --help, -h      Show this help
+USAGE
+}
+
+require_arg() {
+  if [[ $# -lt 2 || "${2:-}" == -* ]]; then
+    echo "Error: $1 requires a value" >&2
+    exit 1
+  fi
+}
+
+require_file() {
+  if [[ $# -lt 2 || "${2:-}" == -* ]]; then
+    echo "Error: $1 requires a file path" >&2
+    exit 1
+  fi
+  if [[ ! -r "$2" ]]; then
+    echo "Error: $1: file not found or not readable: $2" >&2
+    exit 1
+  fi
+}
+
 JOB_ID="$(ar-broker-env AGENT_RUNNER_JOB_ID)"
-TITLE="${1:-}"
-BODY="${2:-}"
-BASE="${3:-}"
-HEAD="${4:-}"
+TITLE=""
+BODY=""
+BASE=""
+HEAD=""
+
+if [[ "${1:-}" == -* ]]; then
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --help|-h)     usage; exit 0 ;;
+      --title|-t)    require_arg "$1" "${2:-}"; TITLE="$2"; shift 2 ;;
+      --body|-b)     require_arg "$1" "${2:-}"; BODY="$2"; shift 2 ;;
+      --body-file|-F) require_file "$1" "${2:-}"; BODY="$(cat "$2")"; shift 2 ;;
+      --base)        require_arg "$1" "${2:-}"; BASE="$2"; shift 2 ;;
+      --head)        require_arg "$1" "${2:-}"; HEAD="$2"; shift 2 ;;
+      *) echo "Error: unknown option: $1" >&2; usage >&2; exit 1 ;;
+    esac
+  done
+else
+  TITLE="${1:-}"
+  BODY="${2:-}"
+  BASE="${3:-}"
+  HEAD="${4:-}"
+fi
+
 PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"title": sys.argv[1], "body": sys.argv[2] or None, "base": sys.argv[3] or None, "head": sys.argv[4] or None}))' "$TITLE" "$BODY" "$BASE" "$HEAD")"
 ar-broker-request "/broker/jobs/${JOB_ID}/repo/open-pr" "$PAYLOAD"

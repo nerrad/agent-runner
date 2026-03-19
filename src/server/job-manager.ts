@@ -458,6 +458,7 @@ export class JobManager {
       await this.appendLogLine(logTarget, `Failed to parse agent result: ${message}`);
     }
 
+    await this.git.ensureExcludePatterns(record.workspacePath);
     const changedFiles = await this.git.getChangedFiles(record.workspacePath);
     let committed = false;
     if (changedFiles.length > 0 && record.spec.commitOnStop) {

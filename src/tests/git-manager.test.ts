@@ -79,6 +79,20 @@ test('commitAll does not duplicate patterns already present in exclude', async (
   assert.equal(pnpmCount, 1, '.pnpm-store should appear exactly once');
 });
 
+test('commitAll returns false when only excluded files are present', async () => {
+  const repo = await createTempRepo();
+  const gm = new GitManager();
+
+  // Create only files that match exclude patterns — no "real" changes
+  await mkdir(path.join(repo, '.pnpm-store'), { recursive: true });
+  await writeFile(path.join(repo, '.pnpm-store', 'pkg.tgz'), 'data', 'utf8');
+  await mkdir(path.join(repo, '.yarn', 'cache'), { recursive: true });
+  await writeFile(path.join(repo, '.yarn', 'cache', 'dep.zip'), 'data', 'utf8');
+
+  const committed = await gm.commitAll(repo, 'snapshot');
+  assert.equal(committed, false, 'commitAll should return false when only excluded files exist');
+});
+
 test('commitAll only writes exclude patterns once across multiple calls', async () => {
   const repo = await createTempRepo();
   const gm = new GitManager();

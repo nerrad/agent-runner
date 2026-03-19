@@ -1,7 +1,44 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: ar-git-push [--remote <name>] [--branch <name>]
+       ar-git-push [remote] [branch]
+
+Push the working branch via the agent-runner broker.
+
+Options:
+  --remote   Remote name (default: origin)
+  --branch   Branch to push (default: current branch)
+  --help, -h Show this help
+USAGE
+}
+
+require_arg() {
+  if [[ $# -lt 2 || "${2:-}" == -* ]]; then
+    echo "Error: $1 requires a value" >&2
+    exit 1
+  fi
+}
+
 JOB_ID="$(ar-broker-env AGENT_RUNNER_JOB_ID)"
-REMOTE="${1:-origin}"
-BRANCH="${2:-}"
+REMOTE="origin"
+BRANCH=""
+
+if [[ "${1:-}" == -* ]]; then
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --help|-h)   usage; exit 0 ;;
+      --remote)    require_arg "$1" "${2:-}"; REMOTE="$2"; shift 2 ;;
+      --branch)    require_arg "$1" "${2:-}"; BRANCH="$2"; shift 2 ;;
+      *) echo "Error: unknown option: $1" >&2; usage >&2; exit 1 ;;
+    esac
+  done
+else
+  REMOTE="${1:-origin}"
+  BRANCH="${2:-}"
+fi
+
 PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"remote": sys.argv[1], "branch": sys.argv[2] or None}))' "$REMOTE" "$BRANCH")"
 ar-broker-request "/broker/jobs/${JOB_ID}/repo/push" "$PAYLOAD"

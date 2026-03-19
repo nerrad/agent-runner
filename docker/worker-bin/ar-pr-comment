@@ -1,7 +1,57 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: ar-pr-comment --pr <number> --body "..."
+       ar-pr-comment <pr-number> <body>
+
+Comment on a pull request via the agent-runner broker.
+
+Options:
+  --pr, --number  PR number (required)
+  --body, -b      Comment body (required)
+  --body-file, -F Read body from a file
+  --help, -h      Show this help
+USAGE
+}
+
+require_arg() {
+  if [[ $# -lt 2 || "${2:-}" == -* ]]; then
+    echo "Error: $1 requires a value" >&2
+    exit 1
+  fi
+}
+
+require_file() {
+  if [[ $# -lt 2 || "${2:-}" == -* ]]; then
+    echo "Error: $1 requires a file path" >&2
+    exit 1
+  fi
+  if [[ ! -r "$2" ]]; then
+    echo "Error: $1: file not found or not readable: $2" >&2
+    exit 1
+  fi
+}
+
 JOB_ID="$(ar-broker-env AGENT_RUNNER_JOB_ID)"
-PR="${1:-}"
-BODY="${2:-}"
-PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"pr": sys.argv[1], "body": sys.argv[2]}))' "$PR" "$BODY")"
+PR=""
+BODY=""
+
+if [[ "${1:-}" == -* ]]; then
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --help|-h)     usage; exit 0 ;;
+      --pr|--number) require_arg "$1" "${2:-}"; PR="$2"; shift 2 ;;
+      --body|-b)     require_arg "$1" "${2:-}"; BODY="$2"; shift 2 ;;
+      --body-file|-F) require_file "$1" "${2:-}"; BODY="$(cat "$2")"; shift 2 ;;
+      *) echo "Error: unknown option: $1" >&2; usage >&2; exit 1 ;;
+    esac
+  done
+else
+  PR="${1:-}"
+  BODY="${2:-}"
+fi
+
+PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"pr": sys.argv[1], "body": sys.argv[2] or None}))' "$PR" "$BODY")"
 ar-broker-request "/broker/jobs/${JOB_ID}/repo/comment-pr" "$PAYLOAD"

@@ -335,6 +335,26 @@ test('repo broker does not set GH_HOST for github.com hosts', async () => {
   assert.equal(capturedEnvs[2]?.GH_HOST, undefined);
 });
 
+test('repo broker openPr rejects title that looks like a CLI flag', async () => {
+  const broker = new RepoBroker(testConfig, async () => ({ stdout: '', stderr: '', exitCode: 0 }));
+  await assert.rejects(
+    () => broker.openPr(createJobRecord(), { title: '--title' }),
+    /CLI flag/,
+  );
+  await assert.rejects(
+    () => broker.openPr(createJobRecord(), { title: '-b' }),
+    /CLI flag/,
+  );
+});
+
+test('repo broker assertWritableBranch error includes example branch name', async () => {
+  const broker = new RepoBroker(testConfig, async () => ({ stdout: '', stderr: '', exitCode: 0 }));
+  await assert.rejects(
+    () => broker.openPr(createJobRecord(), { title: 'Good title', head: '--bad-branch' }),
+    /Invalid branch name.*Expected a git branch name/,
+  );
+});
+
 test('repo broker does not set HTTPS_PROXY for github.com hosts', async () => {
   const capturedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
   const broker = new RepoBroker(testConfig, async (_command, _args, options = {}) => {
