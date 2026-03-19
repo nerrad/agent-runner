@@ -22,6 +22,8 @@ import { isValidBranchName } from './repo-broker.js';
 import type { SecurityAuditLogger } from './security-audit-log.js';
 import { stageSpecBundle } from './spec-resolver.js';
 import { JobStore } from './job-store.js';
+import type { SleepGuard } from './sleep-guard.js';
+import { probeProxyHealth } from './proxy-health.js';
 
 const TERMINAL_STATUSES = new Set<JobStatus>([ 'blocked', 'completed', 'failed', 'canceled' ]);
 const RUNNER_LOG_PREFIX = '[agent-runner]';
@@ -102,6 +104,7 @@ export class JobManager {
     private readonly dockerBroker: DockerBroker,
     private readonly mcpBroker: McpBroker,
     private readonly securityAuditLogger: SecurityAuditLogger,
+    private readonly sleepGuard: SleepGuard,
     options: JobManagerOptions = {},
   ) {
     this.activeLockPath = path.join(this.config.appDir, 'active-job.lock');
@@ -227,6 +230,7 @@ export class JobManager {
     // for the duration of this job.
     let broker: BrokerHandle | undefined;
     try {
+      this.sleepGuard.acquire();
       broker = await this.ensureBroker?.();
 
       const record = await this.requireJob(jobId);
@@ -263,6 +267,7 @@ export class JobManager {
       } catch {
         // Broker shutdown failure must not prevent lock release.
       }
+      this.sleepGuard.release();
       await this.releaseJobSlot(lock);
     }
   }
@@ -301,6 +306,20 @@ export class JobManager {
         blockerReason: runtimeAuth.message,
       });
       return;
+    }
+
+    if (hostProxyEnv?.HTTPS_PROXY) {
+      const proxyOk = await probeProxyHealth(hostProxyEnv.HTTPS_PROXY);
+      if (!proxyOk) {
+        const reason = `SOCKS proxy at ${hostProxyEnv.HTTPS_PROXY} is unreachable — is your SSH tunnel running?`;
+        await this.appendRunnerLogLine(logTarget, reason);
+        await this.updateRecord(record, {
+          status: 'failed',
+          endedAt: new Date().toISOString(),
+          blockerReason: reason,
+        });
+        return;
+      }
     }
 
     record = await this.updateRecord(record, {
@@ -375,7 +394,7 @@ export class JobManager {
     record = await this.updateRecord(record, {
       status: 'running',
     });
-    const heartbeat = this.startIdleHeartbeat(logTarget);
+    const heartbeat = this.startIdleHeartbeat(logTarget, hostProxyEnv?.HTTPS_PROXY);
 
     const authLoopState: AuthLoopState = {
       abortRequested: false,
@@ -1012,10 +1031,11 @@ export class JobManager {
     }
   }
 
-  private startIdleHeartbeat(target: LogTarget): IdleHeartbeat {
+  private startIdleHeartbeat(target: LogTarget, proxyUrl?: string): IdleHeartbeat {
     let timer: NodeJS.Timeout | null = null;
     let stopped = false;
     let generation = 0;
+    let proxyWarnedUnreachable = false;
 
     const schedule = (): void => {
       generation += 1;
@@ -1036,6 +1056,17 @@ export class JobManager {
           }
 
           await this.appendRunnerLogLine(target, 'still running; waiting for agent output');
+
+          if (proxyUrl) {
+            const proxyOk = await probeProxyHealth(proxyUrl);
+            if (!proxyOk && !proxyWarnedUnreachable) {
+              proxyWarnedUnreachable = true;
+              await this.appendRunnerLogLine(target, `proxy health check failed: SOCKS proxy at ${proxyUrl} is unreachable`);
+            } else if (proxyOk && proxyWarnedUnreachable) {
+              proxyWarnedUnreachable = false;
+              await this.appendRunnerLogLine(target, `proxy health check recovered: SOCKS proxy at ${proxyUrl} is reachable again`);
+            }
+          }
 
           if (!stopped && generation === expectedGeneration) {
             schedule();

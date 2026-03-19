@@ -22,12 +22,14 @@ async function main(): Promise<void> {
     process.stdout.write(`agent-runner listening on http://127.0.0.1:${listening.port}\n`);
     process.stdout.write(`agent-runner broker listening on ${config.brokerUrl}${broker.reusedExisting ? ' (reused existing)' : ''}\n`);
   } catch (error) {
+    runtime.sleepGuard.dispose();
     await broker.close().catch(() => undefined);
     appServer?.close();
     throw error;
   }
 
   const shutdown = async () => {
+    runtime.sleepGuard.dispose();
     await broker.close().catch(() => undefined);
     await new Promise<void>((resolve, reject) => {
       appServer.close((error) => {
