@@ -14,7 +14,7 @@ export type CliCommand =
     runtime: AgentRuntime;
     model?: string;
     effort: AgentEffort;
-    host: GitHubHost;
+    host?: GitHubHost;
     ref?: string;
     branch?: string;
     detach: boolean;
@@ -95,7 +95,7 @@ function parseRunArgs(args: string[]): CliCommand {
   let runtime: AgentRuntime = 'claude';
   let model: string | undefined;
   let effort: AgentEffort = 'auto';
-  let host: GitHubHost = 'github.com';
+  let host: GitHubHost | undefined;
   let ref: string | undefined;
   let branch: string | undefined;
   let detach = false;
@@ -242,7 +242,7 @@ export async function normalizeRunSpec(
         agentRuntime: command.runtime,
         model: command.model,
         effort: command.effort,
-        githubHost: command.host,
+        githubHost: command.host ?? extractGitHubHost(command.repo),
         commitOnStop: true,
         wpEnvEnabled: true,
         capabilityProfile: command.profile,
@@ -268,7 +268,7 @@ export async function normalizeRunSpec(
       agentRuntime: command.runtime,
       model: command.model,
       effort: command.effort,
-      githubHost: command.host,
+      githubHost: command.host ?? extractGitHubHost(repoUrl),
       commitOnStop: true,
       wpEnvEnabled: true,
       capabilityProfile: command.profile,
@@ -374,6 +374,20 @@ function normalizeRelativePath(value: string): string {
 
 function looksLikeGitUrl(value: string): boolean {
   return /^(git@|ssh:\/\/|https?:\/\/)/.test(value);
+}
+
+export function extractGitHubHost(repoUrl: string): GitHubHost {
+  // git@github.a8c.com:owner/repo.git
+  const sshMatch = repoUrl.match(/^git@([^:]+):/);
+  if (sshMatch?.[1]) {
+    return sshMatch[1];
+  }
+  // https://github.a8c.com/owner/repo.git  or  ssh://git@github.a8c.com/owner/repo.git
+  const urlMatch = repoUrl.match(/^(?:https?|ssh):\/\/(?:[^@]+@)?([^/]+)\//);
+  if (urlMatch?.[1]) {
+    return urlMatch[1];
+  }
+  return 'github.com';
 }
 
 export function formatJobSummary(record: JobRecord): string {
