@@ -224,14 +224,13 @@ export class JobManager {
       return;
     }
 
-    this.sleepGuard.acquire();
-
     // Ensure the broker is reachable *after* acquiring the lock.  A broker
     // detected before the lock may have been shut down by the previous job's
     // process, so we (re-)start one here where it is guaranteed to survive
     // for the duration of this job.
     let broker: BrokerHandle | undefined;
     try {
+      this.sleepGuard.acquire();
       broker = await this.ensureBroker?.();
 
       const record = await this.requireJob(jobId);
@@ -1036,6 +1035,7 @@ export class JobManager {
     let timer: NodeJS.Timeout | null = null;
     let stopped = false;
     let generation = 0;
+    let proxyWarnedUnreachable = false;
 
     const schedule = (): void => {
       generation += 1;
@@ -1059,8 +1059,12 @@ export class JobManager {
 
           if (proxyUrl) {
             const proxyOk = await probeProxyHealth(proxyUrl);
-            if (!proxyOk) {
+            if (!proxyOk && !proxyWarnedUnreachable) {
+              proxyWarnedUnreachable = true;
               await this.appendRunnerLogLine(target, `proxy health check failed: SOCKS proxy at ${proxyUrl} is unreachable`);
+            } else if (proxyOk && proxyWarnedUnreachable) {
+              proxyWarnedUnreachable = false;
+              await this.appendRunnerLogLine(target, `proxy health check recovered: SOCKS proxy at ${proxyUrl} is reachable again`);
             }
           }
 

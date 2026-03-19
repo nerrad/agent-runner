@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { createServer, type Server } from 'node:net';
 import type { AgentResult, JobRecord } from '../shared/types.js';
 import type { RuntimeConfig } from '../server/config.js';
 import type { DockerRunRequest } from '../server/docker-runner.js';
@@ -831,7 +832,7 @@ test('runJob fails gracefully and releases lock when ensureBroker throws', async
   const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-broker-throw-'));
   const docker = new MockDockerRunner();
   const config = createRuntimeConfig(root);
-  const { manager, store } = createManager(config, docker, {
+  const { manager, store, sleepGuard } = createManager(config, docker, {
     ensureBroker: async () => {
       throw new Error('Broker unavailable');
     },
@@ -844,6 +845,7 @@ test('runJob fails gracefully and releases lock when ensureBroker throws', async
   assert.match(failed.blockerReason ?? '', /Broker unavailable/);
   assert.equal(docker.runCount, 0, 'docker should not have been invoked');
   assert.equal(await pathExists(path.join(config.appDir, 'active-job.lock')), false, 'lock should be released');
+  assert.equal(sleepGuard.refs, 0, 'sleep guard refs should be zero after failure');
 
   clearAuthEnv();
 });
@@ -956,6 +958,81 @@ test('proxy health check failure at job start fails the job with blocker reason'
   assert.equal(failed.status, 'failed');
   assert.match(failed.blockerReason ?? '', /SOCKS proxy.*unreachable/);
   assert.equal(docker.runCount, 0, 'docker should not have been invoked');
+
+  clearAuthEnv();
+});
+
+function listenOnRandomPort(): Promise<{ server: Server; port: number }> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address();
+      if (!addr || typeof addr === 'string') {
+        reject(new Error('unexpected address'));
+        return;
+      }
+      resolve({ server, port: addr.port });
+    });
+    server.on('error', reject);
+  });
+}
+
+test('heartbeat logs proxy warning when proxy becomes unreachable during job', async () => {
+  clearAuthEnv();
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+  // Start a TCP server so the pre-clone proxy check passes.
+  const { server: proxyServer, port: proxyPort } = await listenOnRandomPort();
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-runner-heartbeat-proxy-'));
+  const docker = new SilentDockerRunner(500);
+  const git = new MockGitManager();
+  const config = {
+    ...createRuntimeConfig(root),
+    githubProxyUrl: `socks5://127.0.0.1:${proxyPort}`,
+  };
+  const store = new JobStore(config);
+  const events = new JobEvents();
+  const manager = new JobManager(
+    config,
+    store,
+    events,
+    git as never,
+    docker as never,
+    new AgentAdapters(),
+    new AgentStateAuditor(config),
+    new BrokerLeaseStore(config),
+    new DockerBroker(config),
+    new McpBroker(config),
+    new SecurityAuditLogger(),
+    new SleepGuard('linux'),
+    { runMode: 'inline', heartbeatIntervalMs: 40 },
+  );
+
+  // github.a8c.com triggers proxy env via buildHostGitEnv, which makes
+  // probeProxyHealth run during both the pre-clone gate and heartbeat.
+  const job = await manager.createJob({
+    repoUrl: 'git@github.a8c.com:owner/repo.git',
+    specPath: 'agent-os/specs/example',
+    agentRuntime: 'claude',
+    effort: 'auto',
+    githubHost: 'github.a8c.com',
+    commitOnStop: true,
+    wpEnvEnabled: true,
+    capabilityProfile: 'dangerous',
+    repoAccessMode: 'ambient',
+    agentStateMode: 'mounted',
+  });
+
+  // Wait for the container to start, then kill the proxy so the heartbeat
+  // check fails on the next tick.
+  await waitForJobWithContainer(store, job.id);
+  await new Promise<void>((resolve) => proxyServer.close(() => resolve()));
+
+  const finished = await waitForJob(store, job.id, [ 'completed' ]);
+  const log = await readFile(finished.artifacts.logPath, 'utf8');
+
+  assert.match(log, /proxy health check failed.*SOCKS proxy.*unreachable/);
 
   clearAuthEnv();
 });

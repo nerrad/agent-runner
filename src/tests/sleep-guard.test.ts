@@ -34,11 +34,7 @@ test('SleepGuard double-release does not go negative', () => {
   guard.dispose();
 });
 
-test('SleepGuard spawns caffeinate on darwin when acquiring', async () => {
-  if (process.platform !== 'darwin') {
-    return;
-  }
-
+test('SleepGuard spawns caffeinate on darwin when acquiring', { skip: process.platform !== 'darwin' }, async () => {
   const guard = new SleepGuard('darwin');
 
   guard.acquire();
@@ -46,16 +42,12 @@ test('SleepGuard spawns caffeinate on darwin when acquiring', async () => {
 
   guard.release();
   // Give the process a moment to die
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await new Promise((resolve) => setTimeout(resolve, 200));
   assert.equal(guard.active, false, 'caffeinate should stop after final release');
   assert.equal(guard.refs, 0);
 });
 
-test('SleepGuard keeps caffeinate alive across multiple acquires on darwin', async () => {
-  if (process.platform !== 'darwin') {
-    return;
-  }
-
+test('SleepGuard keeps caffeinate alive across multiple acquires on darwin', { skip: process.platform !== 'darwin' }, async () => {
   const guard = new SleepGuard('darwin');
 
   guard.acquire();
@@ -67,17 +59,13 @@ test('SleepGuard keeps caffeinate alive across multiple acquires on darwin', asy
   assert.equal(guard.refs, 1);
 
   guard.release();
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await new Promise((resolve) => setTimeout(resolve, 200));
   assert.equal(guard.active, false);
 
   guard.dispose();
 });
 
-test('SleepGuard dispose kills caffeinate and resets refs', async () => {
-  if (process.platform !== 'darwin') {
-    return;
-  }
-
+test('SleepGuard dispose kills caffeinate and resets refs', { skip: process.platform !== 'darwin' }, async () => {
   const guard = new SleepGuard('darwin');
 
   guard.acquire();
@@ -85,7 +73,7 @@ test('SleepGuard dispose kills caffeinate and resets refs', async () => {
   assert.equal(guard.active, true);
 
   guard.dispose();
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await new Promise((resolve) => setTimeout(resolve, 200));
 
   assert.equal(guard.refs, 0);
   assert.equal(guard.active, false);

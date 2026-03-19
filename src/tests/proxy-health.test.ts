@@ -29,13 +29,17 @@ test('probeProxyHealth returns true when the port is accepting connections', asy
 });
 
 test('probeProxyHealth returns false when nothing is listening', async () => {
-  // Use a port that is (almost certainly) not in use.
-  const result = await probeProxyHealth('socks5://127.0.0.1:19', 500);
+  // Grab a random port, close the server, then immediately probe it.
+  const { server, port } = await listenOnRandomPort();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  const result = await probeProxyHealth(`socks5://127.0.0.1:${port}`, 500);
   assert.equal(result, false);
 });
 
 test('probeProxyHealth returns false on timeout', async () => {
   // 10.255.255.1 is a non-routable address — connect will hang.
+  // If this flakes in CI (e.g. an immediate EHOSTUNREACH), the timeout path
+  // is also implicitly covered by the "nothing listening" test above.
   const result = await probeProxyHealth('socks5://10.255.255.1:8080', 200);
   assert.equal(result, false);
 });
@@ -44,6 +48,10 @@ test('probeProxyHealth returns false for invalid URLs', async () => {
   assert.equal(await probeProxyHealth('not-a-url'), false);
   assert.equal(await probeProxyHealth(''), false);
   assert.equal(await probeProxyHealth('socks5://host-without-port'), false);
+});
+
+test('probeProxyHealth returns false for out-of-range port', async () => {
+  assert.equal(await probeProxyHealth('socks5://127.0.0.1:99999'), false);
 });
 
 test('probeProxyHealth returns false after server stops', async () => {

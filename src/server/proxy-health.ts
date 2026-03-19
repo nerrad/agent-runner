@@ -6,7 +6,7 @@ import { Socket } from 'node:net';
  * Opens a raw TCP connection to the host:port parsed from `proxyUrl`.
  * If the port accepts the connection, the proxy is considered healthy.
  * No SOCKS handshake is performed — if the port isn't even listening,
- * the tunnel is definitely dead.
+ * the proxy is definitely not usable.
  *
  * @returns `true` if the connection succeeds, `false` on error or timeout.
  */
@@ -29,11 +29,10 @@ export async function probeProxyHealth(proxyUrl: string, timeoutMs = 2000): Prom
       resolve(result);
     };
 
-    socket.setTimeout(timeoutMs);
     socket.once('connect', () => finish(true));
     socket.once('error', () => finish(false));
     socket.once('timeout', () => finish(false));
-    socket.connect(port, host);
+    socket.connect({ port, host, timeout: timeoutMs });
   });
 }
 

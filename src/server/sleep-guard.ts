@@ -50,7 +50,7 @@ export class SleepGuard {
   }
 
   private spawnCaffeinate(): void {
-    if (!this.enabled || this.child) {
+    if (!this.enabled || this.active) {
       return;
     }
 
@@ -61,6 +61,9 @@ export class SleepGuard {
       });
 
       // Don't let the child keep the Node process alive on crash/exit.
+      // Note: if Node crashes hard without running shutdown hooks, the
+      // caffeinate process may be orphaned.  A stray `caffeinate -s` is
+      // harmless and will be cleaned up on next login or reboot.
       this.child.unref();
 
       this.child.on('error', () => {
