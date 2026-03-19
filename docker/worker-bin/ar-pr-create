@@ -1,9 +1,47 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  cat <<'USAGE'
+Usage: ar-pr-create --title "..." --body "..." [--base <branch>] [--head <branch>]
+       ar-pr-create <title> [body] [base] [head]
+
+Create a pull request via the agent-runner broker.
+
+Options:
+  --title, -t     PR title (required)
+  --body, -b      PR body / description
+  --body-file, -F Read body from a file
+  --base          Base branch for the PR
+  --head          Head branch for the PR
+  --help, -h      Show this help
+USAGE
+  exit 0
+fi
+
 JOB_ID="$(ar-broker-env AGENT_RUNNER_JOB_ID)"
-TITLE="${1:-}"
-BODY="${2:-}"
-BASE="${3:-}"
-HEAD="${4:-}"
+TITLE=""
+BODY=""
+BASE=""
+HEAD=""
+
+if [[ ${1:-} == -* ]]; then
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --title|-t)    TITLE="$2"; shift 2 ;;
+      --body|-b)     BODY="$2"; shift 2 ;;
+      --body-file|-F) BODY="$(cat "$2")"; shift 2 ;;
+      --base)        BASE="$2"; shift 2 ;;
+      --head)        HEAD="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+else
+  TITLE="${1:-}"
+  BODY="${2:-}"
+  BASE="${3:-}"
+  HEAD="${4:-}"
+fi
+
 PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"title": sys.argv[1], "body": sys.argv[2] or None, "base": sys.argv[3] or None, "head": sys.argv[4] or None}))' "$TITLE" "$BODY" "$BASE" "$HEAD")"
 ar-broker-request "/broker/jobs/${JOB_ID}/repo/open-pr" "$PAYLOAD"

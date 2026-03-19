@@ -151,7 +151,9 @@ function buildAgentPrompt(spec: JobSpec, branchName: string, branchExplicit: boo
     lines.push('', 'Brokered host access:', '- Do not expect raw host credentials or the host Docker socket to be available.');
     if (spec.repoAccessMode === 'broker') {
       lines.push('- Use `ar-git` and `ar-gh` for brokered read-only repo inspection.');
-      lines.push('- Use `ar-git-push`, `ar-pr-create`, and `ar-pr-comment` for brokered repo writes.');
+      lines.push('- `ar-git-push` — push the working branch (no args needed; uses current branch by default).');
+      lines.push('- `ar-pr-create --title "..." --body "..."` — create a pull request. Optional: `--base <branch>`, `--head <branch>`.');
+      lines.push('- `ar-pr-comment --pr <number> --body "..."` — comment on an existing PR.');
     }
     if (spec.capabilityProfile === 'docker-broker') {
       lines.push('- Use `ar-docker-compose-up`, `ar-docker-compose-down`, `ar-docker-logs`, `ar-docker-exec`, `ar-wp-env-start`, `ar-wp-env-stop`, `ar-wp-env-run`, and `ar-wp-env-logs` for brokered Docker operations.');

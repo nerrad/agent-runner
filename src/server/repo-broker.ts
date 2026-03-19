@@ -114,6 +114,12 @@ export class RepoBroker {
     if (!options.title.trim()) {
       throw new Error('Missing PR title');
     }
+    if (options.title.startsWith('--') || options.title.startsWith('-')) {
+      throw new Error(
+        'PR title appears to be a CLI flag. '
+        + 'Use: ar-pr-create --title "PR title" --body "description" [--base trunk] [--head branch]',
+      );
+    }
     const head = options.head ?? record.branchName;
     assertWritableBranch(record, head);
     const args = [ 'pr', 'create', '--head', head, '--title', options.title ];
@@ -284,7 +290,7 @@ function assertWritableBranch(record: JobRecord, branchName: string): void {
   }
 
   if (!isValidBranchName(branchName)) {
-    throw new Error(`Invalid branch name: ${branchName}`);
+    throw new Error(`Invalid branch name for --head: ${branchName}. Expected a git branch name like "feat/my-feature".`);
   }
 
   if (!record.defaultBranch) {

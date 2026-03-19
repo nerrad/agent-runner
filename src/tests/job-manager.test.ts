@@ -50,6 +50,7 @@ class MockGitManager {
   }
   async getHeadSha(): Promise<string> { return this.headSha; }
   async getChangedFiles(): Promise<string[]> { return this.changedFiles; }
+  async ensureExcludePatterns(): Promise<void> {}
   async commitAll(): Promise<boolean> { return true; }
   async getCurrentBranch(): Promise<string> { return this.currentBranch; }
 }
@@ -801,6 +802,12 @@ test('runJob calls ensureBroker after acquiring lock and broker.close() in final
 
   const job = await createJob(manager, 'claude');
   await waitForJob(store, job.id, [ 'completed' ]);
+
+  // Allow the runJob finally block (which calls broker.close) to settle after
+  // the job status transitions to completed inside executeJob.
+  for (let i = 0; i < 50 && !callOrder.includes('broker.close'); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 
   assert.ok(callOrder.includes('ensureBroker'), 'ensureBroker should be called');
   assert.ok(callOrder.includes('broker.close'), 'broker.close should be called');

@@ -1,7 +1,39 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  cat <<'USAGE'
+Usage: ar-pr-comment --pr <number> --body "..."
+       ar-pr-comment <pr-number> <body>
+
+Comment on a pull request via the agent-runner broker.
+
+Options:
+  --pr, --number  PR number (required)
+  --body, -b      Comment body (required)
+  --body-file, -F Read body from a file
+  --help, -h      Show this help
+USAGE
+  exit 0
+fi
+
 JOB_ID="$(ar-broker-env AGENT_RUNNER_JOB_ID)"
-PR="${1:-}"
-BODY="${2:-}"
+PR=""
+BODY=""
+
+if [[ ${1:-} == -* ]]; then
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pr|--number) PR="$2"; shift 2 ;;
+      --body|-b)     BODY="$2"; shift 2 ;;
+      --body-file|-F) BODY="$(cat "$2")"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+else
+  PR="${1:-}"
+  BODY="${2:-}"
+fi
+
 PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"pr": sys.argv[1], "body": sys.argv[2]}))' "$PR" "$BODY")"
 ar-broker-request "/broker/jobs/${JOB_ID}/repo/comment-pr" "$PAYLOAD"

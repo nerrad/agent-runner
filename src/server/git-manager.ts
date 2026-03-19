@@ -97,12 +97,12 @@ export class GitManager {
   }
 
   async commitAll(workspacePath: string, message: string): Promise<boolean> {
+    await this.ensureExcludePatterns(workspacePath);
+
     const changedFiles = await this.getChangedFiles(workspacePath);
     if (changedFiles.length === 0) {
       return false;
     }
-
-    await this.ensureExcludePatterns(workspacePath);
 
     const addResult = await runCommand('git', [ '-C', workspacePath, 'add', '-A' ]);
     if (addResult.exitCode !== 0) {
@@ -125,7 +125,7 @@ export class GitManager {
     '.npm/_cacache',
   ];
 
-  private async ensureExcludePatterns(workspacePath: string): Promise<void> {
+  async ensureExcludePatterns(workspacePath: string): Promise<void> {
     if (this.excludeWritten) {
       return;
     }
