@@ -29,10 +29,11 @@ export async function probeProxyHealth(proxyUrl: string, timeoutMs = 2000): Prom
       resolve(result);
     };
 
+    socket.setTimeout(timeoutMs);
     socket.once('connect', () => finish(true));
     socket.once('error', () => finish(false));
     socket.once('timeout', () => finish(false));
-    socket.connect({ port, host, timeout: timeoutMs });
+    socket.connect(port, host);
   });
 }
 
