@@ -128,6 +128,7 @@ function buildAgentPrompt(spec: JobSpec, branchName: string, branchExplicit: boo
     'Requirements:',
     '- Start with /spec/plan.md and work until the plan is complete or a hard blocker prevents progress.',
     '- Read /spec/shape.md, /spec/standards.md, /spec/references.md, and /spec/visuals only when they are relevant to the work.',
+    '- Before pushing or creating a PR, fetch and fast-forward the main branch, then rebase your working branch onto it.',
     '- Run any relevant build, test, or validation steps yourself.',
     '- If you hit a hard blocker, capture the blocker precisely.',
     '- Your final response must be JSON matching the required schema only.',
