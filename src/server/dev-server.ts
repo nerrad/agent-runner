@@ -11,6 +11,7 @@ const port = Number.parseInt(process.env.PORT ?? '4317', 10);
 async function main(): Promise<void> {
   const config = await loadRuntimeConfig();
   const runtime = createRuntime(config);
+  await runtime.manager.cleanupOrphanedDockerResources();
   const { app } = createApp(runtime);
   const broker = await ensureBrokerService(runtime);
   const vite = await createViteServer({
