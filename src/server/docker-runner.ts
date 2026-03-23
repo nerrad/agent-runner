@@ -97,6 +97,13 @@ export class DockerRunner {
       `AGENT_RUNNER_PROFILE=${capabilityProfile}`,
     ];
 
+    if (this.config.dockerMemoryLimit) {
+      dockerArgs.push('--memory', this.config.dockerMemoryLimit);
+    }
+    if (this.config.dockerCpuLimit) {
+      dockerArgs.push('--cpus', this.config.dockerCpuLimit);
+    }
+
     if (capabilityProfile !== 'dangerous') {
       dockerArgs.push('--cap-drop=ALL');
       dockerArgs.push('--security-opt=no-new-privileges');

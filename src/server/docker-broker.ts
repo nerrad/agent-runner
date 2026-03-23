@@ -226,30 +226,206 @@ export class DockerBroker {
     const state = await this.readState(record.id);
     const projectName = state?.projectName ?? this.projectName(record);
 
-    await this.execute('docker', [ 'compose', '-p', projectName, 'down', '--volumes', '--remove-orphans' ], {
+    const composeDown = await this.execute('docker', [ 'compose', '-p', projectName, 'down', '--volumes', '--remove-orphans' ], {
       cwd: record.workspacePath,
       env: this.composeEnv(record),
-    }).catch(() => undefined);
+    }).catch((error) => {
+      console.warn(`[docker-broker] compose down failed for job ${record.id}: ${error instanceof Error ? error.message : String(error)}`);
+      return { exitCode: 1, stdout: '', stderr: '' };
+    });
+
+    if (composeDown.exitCode !== 0) {
+      console.warn(`[docker-broker] compose down exited ${composeDown.exitCode} for job ${record.id}`);
+    }
 
     const currentState = await this.refreshState(record).catch(() => state ?? this.emptyState(record.id, projectName));
 
     for (const containerId of currentState.containers) {
-      await this.execute('docker', [ 'rm', '-f', containerId ], { cwd: record.workspacePath }).catch(() => undefined);
+      await this.removeWithRetry('rm', ['-f', containerId], record.id, `container ${containerId}`, record.workspacePath);
     }
 
     for (const networkId of currentState.networks) {
-      await this.execute('docker', [ 'network', 'rm', networkId ], { cwd: record.workspacePath }).catch(() => undefined);
+      await this.removeWithRetry('network', ['rm', networkId], record.id, `network ${networkId}`, record.workspacePath);
     }
 
     for (const volumeName of currentState.volumes) {
-      await this.execute('docker', [ 'volume', 'rm', '-f', volumeName ], { cwd: record.workspacePath }).catch(() => undefined);
+      await this.removeWithRetry('volume', ['rm', '-f', volumeName], record.id, `volume ${volumeName}`, record.workspacePath);
     }
 
     await writeJsonAtomic(this.statePath(record.id), this.emptyState(record.id, projectName));
   }
 
+  private async removeWithRetry(
+    subcommand: string,
+    args: string[],
+    jobId: string,
+    description: string,
+    cwd: string,
+  ): Promise<void> {
+    const attempt = async () => {
+      const result = await this.execute('docker', [subcommand, ...args], { cwd })
+        .catch((error) => ({ exitCode: 1, stdout: '', stderr: error instanceof Error ? error.message : String(error) }));
+      return result;
+    };
+
+    let result = await attempt();
+    if (result.exitCode === 0) return;
+
+    // Single retry
+    result = await attempt();
+    if (result.exitCode !== 0) {
+      console.warn(`[docker-broker] failed to remove ${description} for job ${jobId} after retry: ${result.stderr}`);
+    }
+  }
+
   async getTrackedState(jobId: string): Promise<DockerResourceState | null> {
     return await this.readState(jobId);
+  }
+
+  /**
+   * Remove containers, networks, and volumes that belong to agent-runner jobs
+   * which are no longer active.  Called once at startup before any new jobs run.
+   *
+   * Scans two label families:
+   *  1. `agent-runner.job` — set by containerRun() and imageBuild()
+   *  2. `com.docker.compose.project=agent-runner-*` — set by compose()/wpEnv()
+   * Plus the main worker container named `agent-runner-<jobId>`.
+   */
+  async cleanupOrphanedResources(activeJobIds: Set<string>): Promise<{ containers: number; networks: number; volumes: number }> {
+    const removed = { containers: 0, networks: 0, volumes: 0 };
+    const orphanProjectNames = new Set<string>();
+    const activeProjectNames = new Set(
+      [...activeJobIds].map((id) => `agent-runner-${id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24).toLowerCase()}`),
+    );
+
+    // Agent-runner compose project names are always agent-runner- + 24 hex chars.
+    // Strict match avoids nuking unrelated projects like "agent-runner-dev".
+    const isAgentRunnerProject = (name: string): boolean =>
+      /^agent-runner-[0-9a-f]{24}$/.test(name);
+
+    // --- Pass 1: containers with agent-runner.job label (containerRun/imageBuild) ---
+    const labeledResult = await this.execute('docker', [
+      'ps', '-a',
+      '--filter', 'label=agent-runner.job',
+      '--format', '{{.ID}}\t{{.Label "agent-runner.job"}}',
+    ]).catch(() => ({ exitCode: 1, stdout: '', stderr: '' }));
+
+    if (labeledResult.exitCode === 0) {
+      for (const line of labeledResult.stdout.split('\n').filter(Boolean)) {
+        const [containerId, jobId] = line.split('\t');
+        if (!containerId || !jobId) continue;
+        if (activeJobIds.has(jobId)) continue;
+
+        orphanProjectNames.add(`agent-runner-${jobId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24).toLowerCase()}`);
+        const rmResult = await this.execute('docker', ['rm', '-f', containerId]).catch(() => ({ exitCode: 1, stdout: '', stderr: 'unknown' }));
+        if (rmResult.exitCode === 0) {
+          removed.containers += 1;
+        } else {
+          console.warn(`[docker-broker] failed to remove orphan container ${containerId} (job ${jobId}): ${rmResult.stderr}`);
+        }
+      }
+    }
+
+    // --- Pass 2: compose service containers (compose/wpEnv) ---
+    // These only have com.docker.compose.project labels, not agent-runner.job.
+    const composeResult = await this.execute('docker', [
+      'ps', '-a',
+      '--filter', 'label=com.docker.compose.project',
+      '--format', '{{.ID}}\t{{.Label "com.docker.compose.project"}}',
+    ]).catch(() => ({ exitCode: 1, stdout: '', stderr: '' }));
+
+    if (composeResult.exitCode === 0) {
+      for (const line of composeResult.stdout.split('\n').filter(Boolean)) {
+        const [containerId, projectName] = line.split('\t');
+        if (!containerId || !projectName) continue;
+        if (!isAgentRunnerProject(projectName)) continue;
+        if (activeProjectNames.has(projectName)) continue;
+
+        orphanProjectNames.add(projectName);
+        const rmResult = await this.execute('docker', ['rm', '-f', containerId]).catch(() => ({ exitCode: 1, stdout: '', stderr: 'unknown' }));
+        if (rmResult.exitCode === 0) {
+          removed.containers += 1;
+        } else {
+          console.warn(`[docker-broker] failed to remove orphan compose container ${containerId} (project ${projectName}): ${rmResult.stderr}`);
+        }
+      }
+    }
+
+    // --- Pass 3: main worker containers (named agent-runner-<jobId>) ---
+    // DockerRunner creates these with --name but no agent-runner.job label.
+    const workerResult = await this.execute('docker', [
+      'ps', '-a',
+      '--filter', 'name=^agent-runner-',
+      '--format', '{{.ID}}\t{{.Names}}',
+    ]).catch(() => ({ exitCode: 1, stdout: '', stderr: '' }));
+
+    if (workerResult.exitCode === 0) {
+      for (const line of workerResult.stdout.split('\n').filter(Boolean)) {
+        const [containerId, name] = line.split('\t');
+        if (!containerId || !name) continue;
+        // Worker containers are named agent-runner-<full-uuid>
+        const match = name.match(/^agent-runner-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/);
+        if (!match) continue;
+        const jobId = match[1];
+        if (activeJobIds.has(jobId)) continue;
+
+        const rmResult = await this.execute('docker', ['rm', '-f', containerId]).catch(() => ({ exitCode: 1, stdout: '', stderr: 'unknown' }));
+        if (rmResult.exitCode === 0) {
+          removed.containers += 1;
+        } else {
+          console.warn(`[docker-broker] failed to remove orphan worker container ${containerId} (job ${jobId}): ${rmResult.stderr}`);
+        }
+      }
+    }
+
+    // --- Pass 4: networks and volumes for orphaned compose projects ---
+    // Scan networks/volumes directly so leaked resources are found even when
+    // all containers for that project have already been removed.
+    const networkScanResult = await this.execute('docker', [
+      'network', 'ls',
+      '--filter', 'label=com.docker.compose.project',
+      '--format', '{{.ID}}\t{{.Label "com.docker.compose.project"}}',
+    ]).catch(() => ({ exitCode: 1, stdout: '', stderr: '' }));
+
+    if (networkScanResult.exitCode === 0) {
+      for (const line of networkScanResult.stdout.split('\n').filter(Boolean)) {
+        const [networkId, projectName] = line.split('\t');
+        if (!networkId || !projectName) continue;
+        if (!isAgentRunnerProject(projectName)) continue;
+        if (activeProjectNames.has(projectName)) continue;
+
+        const rmResult = await this.execute('docker', ['network', 'rm', networkId]).catch(() => ({ exitCode: 1, stdout: '', stderr: 'unknown' }));
+        if (rmResult.exitCode === 0) {
+          removed.networks += 1;
+        } else {
+          console.warn(`[docker-broker] failed to remove orphan network ${networkId} (project ${projectName}): ${rmResult.stderr}`);
+        }
+      }
+    }
+
+    const volumeScanResult = await this.execute('docker', [
+      'volume', 'ls',
+      '--filter', 'label=com.docker.compose.project',
+      '--format', '{{.Name}}\t{{.Label "com.docker.compose.project"}}',
+    ]).catch(() => ({ exitCode: 1, stdout: '', stderr: '' }));
+
+    if (volumeScanResult.exitCode === 0) {
+      for (const line of volumeScanResult.stdout.split('\n').filter(Boolean)) {
+        const [volumeName, projectName] = line.split('\t');
+        if (!volumeName || !projectName) continue;
+        if (!isAgentRunnerProject(projectName)) continue;
+        if (activeProjectNames.has(projectName)) continue;
+
+        const rmResult = await this.execute('docker', ['volume', 'rm', '-f', volumeName]).catch(() => ({ exitCode: 1, stdout: '', stderr: 'unknown' }));
+        if (rmResult.exitCode === 0) {
+          removed.volumes += 1;
+        } else {
+          console.warn(`[docker-broker] failed to remove orphan volume ${volumeName} (project ${projectName}): ${rmResult.stderr}`);
+        }
+      }
+    }
+
+    return removed;
   }
 
   private async validateComposeConfig(record: JobRecord, globalArgs: string[]): Promise<void> {

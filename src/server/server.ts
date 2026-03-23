@@ -11,6 +11,7 @@ const port = Number.parseInt(process.env.PORT ?? '4317', 10);
 async function main(): Promise<void> {
   const config = await loadRuntimeConfig();
   const runtime = createRuntime(config);
+  await runtime.manager.cleanupOrphanedDockerResources();
   const { app } = createApp(runtime);
   await serveClient(app, path.join(config.sourceRoot, 'dist', 'client'));
   const broker = await ensureBrokerService(runtime);

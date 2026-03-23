@@ -27,6 +27,7 @@ async function main(): Promise<void> {
       return;
     }
     case 'run': {
+      await runtime.manager.cleanupOrphanedDockerResources();
       const normalized = await normalizeRunSpec(command, config, runtime.git);
       const record = await runtime.manager.createJob(normalized.jobSpec);
       process.stdout.write(`${record.id}\n`);
@@ -80,6 +81,7 @@ async function main(): Promise<void> {
       return;
     }
     case 'internal-run': {
+      await runtime.manager.cleanupOrphanedDockerResources();
       await runtime.manager.runJob(command.jobId);
       return;
     }

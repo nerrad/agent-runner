@@ -115,6 +115,60 @@ export class JobManager {
     this.ensureBroker = options.ensureBroker;
   }
 
+  /**
+   * Remove Docker resources left behind by jobs that are no longer active.
+   * Should be called once during server startup, before processing any queue.
+   *
+   * Holds the active-job lock for the duration of the scan so no new job can
+   * start containers while we decide what is orphaned.  If another process
+   * already holds a live lock, cleanup is skipped — that process owns the
+   * resources and will clean up after itself.
+   */
+  async cleanupOrphanedDockerResources(): Promise<void> {
+    // Try to acquire the lock exclusively (non-blocking).
+    // If a live process holds it, skip cleanup — it will handle its own resources.
+    const lock = await this.readActiveLock();
+    if (lock?.pid && this.isProcessAlive(lock.pid)) {
+      return;
+    }
+
+    // Clear any stale lock so we can acquire it.
+    if (lock) {
+      await this.clearStaleLock();
+    }
+
+    let acquired = false;
+    try {
+      const handle = await open(this.activeLockPath, 'wx');
+      const payload: JobLockPayload = { jobId: '__orphan-cleanup__', pid: process.pid };
+      await handle.writeFile(JSON.stringify(payload));
+      await handle.close();
+      acquired = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        // Another process grabbed the lock between our check and acquire — skip.
+        return;
+      }
+      throw error;
+    }
+
+    try {
+      // With the lock held, no new job can start containers.
+      // The only active job ID is the sentinel; nothing real should match.
+      const removed = await this.dockerBroker.cleanupOrphanedResources(new Set());
+      const total = removed.containers + removed.networks + removed.volumes;
+      if (total > 0) {
+        process.stderr.write(
+          `[agent-runner] cleaned up orphaned docker resources: ${removed.containers} containers, ${removed.networks} networks, ${removed.volumes} volumes\n`,
+        );
+      }
+    } finally {
+      if (acquired) {
+        await unlink(this.activeLockPath).catch(() => undefined);
+      }
+    }
+  }
+
   async createJob(input: JobSpec): Promise<JobRecord> {
     const parsed = JobSpecSchema.parse(input);
     const spec = this.normalizeJobSpec(parsed);
