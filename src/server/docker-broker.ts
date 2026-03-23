@@ -298,6 +298,11 @@ export class DockerBroker {
       [...activeJobIds].map((id) => `agent-runner-${id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24).toLowerCase()}`),
     );
 
+    // Agent-runner compose project names are always agent-runner- + 24 hex chars.
+    // Strict match avoids nuking unrelated projects like "agent-runner-dev".
+    const isAgentRunnerProject = (name: string): boolean =>
+      /^agent-runner-[0-9a-f]{24}$/.test(name);
+
     // --- Pass 1: containers with agent-runner.job label (containerRun/imageBuild) ---
     const labeledResult = await this.execute('docker', [
       'ps', '-a',
@@ -333,7 +338,7 @@ export class DockerBroker {
       for (const line of composeResult.stdout.split('\n').filter(Boolean)) {
         const [containerId, projectName] = line.split('\t');
         if (!containerId || !projectName) continue;
-        if (!projectName.startsWith('agent-runner-')) continue;
+        if (!isAgentRunnerProject(projectName)) continue;
         if (activeProjectNames.has(projectName)) continue;
 
         orphanProjectNames.add(projectName);
@@ -374,38 +379,48 @@ export class DockerBroker {
     }
 
     // --- Pass 4: networks and volumes for orphaned compose projects ---
-    for (const projectName of orphanProjectNames) {
-      const networkResult = await this.execute('docker', [
-        'network', 'ls',
-        '--filter', `label=com.docker.compose.project=${projectName}`,
-        '--format', '{{.ID}}',
-      ]).catch(() => ({ exitCode: 1, stdout: '', stderr: '' }));
+    // Scan networks/volumes directly so leaked resources are found even when
+    // all containers for that project have already been removed.
+    const networkScanResult = await this.execute('docker', [
+      'network', 'ls',
+      '--filter', 'label=com.docker.compose.project',
+      '--format', '{{.ID}}\t{{.Label "com.docker.compose.project"}}',
+    ]).catch(() => ({ exitCode: 1, stdout: '', stderr: '' }));
 
-      if (networkResult.exitCode === 0) {
-        for (const networkId of networkResult.stdout.split('\n').filter(Boolean)) {
-          const rmResult = await this.execute('docker', ['network', 'rm', networkId]).catch(() => ({ exitCode: 1, stdout: '', stderr: 'unknown' }));
-          if (rmResult.exitCode === 0) {
-            removed.networks += 1;
-          } else {
-            console.warn(`[docker-broker] failed to remove orphan network ${networkId} (project ${projectName}): ${rmResult.stderr}`);
-          }
+    if (networkScanResult.exitCode === 0) {
+      for (const line of networkScanResult.stdout.split('\n').filter(Boolean)) {
+        const [networkId, projectName] = line.split('\t');
+        if (!networkId || !projectName) continue;
+        if (!isAgentRunnerProject(projectName)) continue;
+        if (activeProjectNames.has(projectName)) continue;
+
+        const rmResult = await this.execute('docker', ['network', 'rm', networkId]).catch(() => ({ exitCode: 1, stdout: '', stderr: 'unknown' }));
+        if (rmResult.exitCode === 0) {
+          removed.networks += 1;
+        } else {
+          console.warn(`[docker-broker] failed to remove orphan network ${networkId} (project ${projectName}): ${rmResult.stderr}`);
         }
       }
+    }
 
-      const volumeResult = await this.execute('docker', [
-        'volume', 'ls',
-        '--filter', `label=com.docker.compose.project=${projectName}`,
-        '--format', '{{.Name}}',
-      ]).catch(() => ({ exitCode: 1, stdout: '', stderr: '' }));
+    const volumeScanResult = await this.execute('docker', [
+      'volume', 'ls',
+      '--filter', 'label=com.docker.compose.project',
+      '--format', '{{.Name}}\t{{.Label "com.docker.compose.project"}}',
+    ]).catch(() => ({ exitCode: 1, stdout: '', stderr: '' }));
 
-      if (volumeResult.exitCode === 0) {
-        for (const volumeName of volumeResult.stdout.split('\n').filter(Boolean)) {
-          const rmResult = await this.execute('docker', ['volume', 'rm', '-f', volumeName]).catch(() => ({ exitCode: 1, stdout: '', stderr: 'unknown' }));
-          if (rmResult.exitCode === 0) {
-            removed.volumes += 1;
-          } else {
-            console.warn(`[docker-broker] failed to remove orphan volume ${volumeName} (project ${projectName}): ${rmResult.stderr}`);
-          }
+    if (volumeScanResult.exitCode === 0) {
+      for (const line of volumeScanResult.stdout.split('\n').filter(Boolean)) {
+        const [volumeName, projectName] = line.split('\t');
+        if (!volumeName || !projectName) continue;
+        if (!isAgentRunnerProject(projectName)) continue;
+        if (activeProjectNames.has(projectName)) continue;
+
+        const rmResult = await this.execute('docker', ['volume', 'rm', '-f', volumeName]).catch(() => ({ exitCode: 1, stdout: '', stderr: 'unknown' }));
+        if (rmResult.exitCode === 0) {
+          removed.volumes += 1;
+        } else {
+          console.warn(`[docker-broker] failed to remove orphan volume ${volumeName} (project ${projectName}): ${rmResult.stderr}`);
         }
       }
     }
