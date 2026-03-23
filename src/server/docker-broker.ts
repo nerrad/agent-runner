@@ -226,30 +226,135 @@ export class DockerBroker {
     const state = await this.readState(record.id);
     const projectName = state?.projectName ?? this.projectName(record);
 
-    await this.execute('docker', [ 'compose', '-p', projectName, 'down', '--volumes', '--remove-orphans' ], {
+    const composeDown = await this.execute('docker', [ 'compose', '-p', projectName, 'down', '--volumes', '--remove-orphans' ], {
       cwd: record.workspacePath,
       env: this.composeEnv(record),
-    }).catch(() => undefined);
+    }).catch((error) => {
+      console.warn(`[docker-broker] compose down failed for job ${record.id}: ${error instanceof Error ? error.message : String(error)}`);
+      return { exitCode: 1, stdout: '', stderr: '' };
+    });
+
+    if (composeDown.exitCode !== 0) {
+      console.warn(`[docker-broker] compose down exited ${composeDown.exitCode} for job ${record.id}`);
+    }
 
     const currentState = await this.refreshState(record).catch(() => state ?? this.emptyState(record.id, projectName));
 
     for (const containerId of currentState.containers) {
-      await this.execute('docker', [ 'rm', '-f', containerId ], { cwd: record.workspacePath }).catch(() => undefined);
+      await this.removeWithRetry('rm', ['-f', containerId], record.id, `container ${containerId}`, record.workspacePath);
     }
 
     for (const networkId of currentState.networks) {
-      await this.execute('docker', [ 'network', 'rm', networkId ], { cwd: record.workspacePath }).catch(() => undefined);
+      await this.removeWithRetry('network', ['rm', networkId], record.id, `network ${networkId}`, record.workspacePath);
     }
 
     for (const volumeName of currentState.volumes) {
-      await this.execute('docker', [ 'volume', 'rm', '-f', volumeName ], { cwd: record.workspacePath }).catch(() => undefined);
+      await this.removeWithRetry('volume', ['rm', '-f', volumeName], record.id, `volume ${volumeName}`, record.workspacePath);
     }
 
     await writeJsonAtomic(this.statePath(record.id), this.emptyState(record.id, projectName));
   }
 
+  private async removeWithRetry(
+    subcommand: string,
+    args: string[],
+    jobId: string,
+    description: string,
+    cwd: string,
+  ): Promise<void> {
+    const attempt = async () => {
+      const result = await this.execute('docker', [subcommand, ...args], { cwd })
+        .catch((error) => ({ exitCode: 1, stdout: '', stderr: error instanceof Error ? error.message : String(error) }));
+      return result;
+    };
+
+    let result = await attempt();
+    if (result.exitCode === 0) return;
+
+    // Single retry
+    result = await attempt();
+    if (result.exitCode !== 0) {
+      console.warn(`[docker-broker] failed to remove ${description} for job ${jobId} after retry: ${result.stderr}`);
+    }
+  }
+
   async getTrackedState(jobId: string): Promise<DockerResourceState | null> {
     return await this.readState(jobId);
+  }
+
+  /**
+   * Remove containers, networks, and volumes that belong to agent-runner jobs
+   * which are no longer active.  Called once at startup before any new jobs run.
+   */
+  async cleanupOrphanedResources(activeJobIds: Set<string>): Promise<{ containers: number; networks: number; volumes: number }> {
+    const removed = { containers: 0, networks: 0, volumes: 0 };
+
+    // Find all containers labelled as agent-runner resources
+    const containerResult = await this.execute('docker', [
+      'ps', '-a',
+      '--filter', 'label=agent-runner.job',
+      '--format', '{{.ID}}\t{{.Label "agent-runner.job"}}',
+    ]).catch(() => ({ exitCode: 1, stdout: '', stderr: '' }));
+
+    if (containerResult.exitCode !== 0) {
+      return removed;
+    }
+
+    const orphanJobIds = new Set<string>();
+    for (const line of containerResult.stdout.split('\n').filter(Boolean)) {
+      const [containerId, jobId] = line.split('\t');
+      if (!containerId || !jobId) continue;
+      if (activeJobIds.has(jobId)) continue;
+
+      orphanJobIds.add(jobId);
+      const rmResult = await this.execute('docker', ['rm', '-f', containerId]).catch(() => ({ exitCode: 1, stdout: '', stderr: 'unknown' }));
+      if (rmResult.exitCode === 0) {
+        removed.containers += 1;
+      } else {
+        console.warn(`[docker-broker] failed to remove orphan container ${containerId} (job ${jobId}): ${rmResult.stderr}`);
+      }
+    }
+
+    // Clean up compose networks/volumes for orphaned project names
+    for (const jobId of orphanJobIds) {
+      const projectName = `agent-runner-${jobId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24).toLowerCase()}`;
+
+      const networkResult = await this.execute('docker', [
+        'network', 'ls',
+        '--filter', `label=com.docker.compose.project=${projectName}`,
+        '--format', '{{.ID}}',
+      ]).catch(() => ({ exitCode: 1, stdout: '', stderr: '' }));
+
+      if (networkResult.exitCode === 0) {
+        for (const networkId of networkResult.stdout.split('\n').filter(Boolean)) {
+          const rmResult = await this.execute('docker', ['network', 'rm', networkId]).catch(() => ({ exitCode: 1, stdout: '', stderr: 'unknown' }));
+          if (rmResult.exitCode === 0) {
+            removed.networks += 1;
+          } else {
+            console.warn(`[docker-broker] failed to remove orphan network ${networkId} (project ${projectName}): ${rmResult.stderr}`);
+          }
+        }
+      }
+
+      const volumeResult = await this.execute('docker', [
+        'volume', 'ls',
+        '--filter', `label=com.docker.compose.project=${projectName}`,
+        '--format', '{{.Name}}',
+      ]).catch(() => ({ exitCode: 1, stdout: '', stderr: '' }));
+
+      if (volumeResult.exitCode === 0) {
+        for (const volumeName of volumeResult.stdout.split('\n').filter(Boolean)) {
+          const rmResult = await this.execute('docker', ['volume', 'rm', '-f', volumeName]).catch(() => ({ exitCode: 1, stdout: '', stderr: 'unknown' }));
+          if (rmResult.exitCode === 0) {
+            removed.volumes += 1;
+          } else {
+            console.warn(`[docker-broker] failed to remove orphan volume ${volumeName} (project ${projectName}): ${rmResult.stderr}`);
+          }
+        }
+      }
+    }
+
+    return removed;
   }
 
   private async validateComposeConfig(record: JobRecord, globalArgs: string[]): Promise<void> {

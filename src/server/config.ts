@@ -27,6 +27,8 @@ export interface RuntimeConfig {
   brokerPort: number;
   brokerHost: string;
   brokerUrl: string;
+  dockerMemoryLimit?: string;
+  dockerCpuLimit?: string;
 }
 
 /** Home directory inside the worker Docker container. Must match the Dockerfile. */
@@ -69,6 +71,8 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
     sshAuthSock: process.env.SSH_AUTH_SOCK,
     githubProxyUrl: validateProxyUrl(process.env.AGENT_RUNNER_GITHUB_PROXY_URL),
     workerImageTag: process.env.AGENT_RUNNER_IMAGE ?? 'agent-runner-worker:latest',
+    dockerMemoryLimit: process.env.AGENT_RUNNER_DOCKER_MEMORY ?? '8g',
+    dockerCpuLimit: process.env.AGENT_RUNNER_DOCKER_CPUS ?? '4',
     sourceRoot,
     brokerPort: Number.parseInt(process.env.AGENT_RUNNER_BROKER_PORT ?? '4318', 10),
     brokerHost: process.env.AGENT_RUNNER_BROKER_HOST ?? 'host.docker.internal',

@@ -115,6 +115,27 @@ export class JobManager {
     this.ensureBroker = options.ensureBroker;
   }
 
+  /**
+   * Remove Docker resources left behind by jobs that are no longer active.
+   * Should be called once during server startup, before processing any queue.
+   */
+  async cleanupOrphanedDockerResources(): Promise<void> {
+    const jobs = await this.store.list();
+    const activeJobIds = new Set(
+      jobs
+        .filter((j) => !TERMINAL_STATUSES.has(j.status))
+        .map((j) => j.id),
+    );
+
+    const removed = await this.dockerBroker.cleanupOrphanedResources(activeJobIds);
+    const total = removed.containers + removed.networks + removed.volumes;
+    if (total > 0) {
+      console.log(
+        `[agent-runner] cleaned up orphaned docker resources: ${removed.containers} containers, ${removed.networks} networks, ${removed.volumes} volumes`,
+      );
+    }
+  }
+
   async createJob(input: JobSpec): Promise<JobRecord> {
     const parsed = JobSpecSchema.parse(input);
     const spec = this.normalizeJobSpec(parsed);
