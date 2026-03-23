@@ -118,20 +118,25 @@ export class JobManager {
   /**
    * Remove Docker resources left behind by jobs that are no longer active.
    * Should be called once during server startup, before processing any queue.
+   *
+   * A job is considered truly active only if it holds the active lock AND the
+   * owning process is still alive.  Non-terminal records whose process has
+   * died (reboot, kill, OrbStack crash) are treated as orphaned.
    */
   async cleanupOrphanedDockerResources(): Promise<void> {
-    const jobs = await this.store.list();
-    const activeJobIds = new Set(
-      jobs
-        .filter((j) => !TERMINAL_STATUSES.has(j.status))
-        .map((j) => j.id),
-    );
+    const lock = await this.readActiveLock();
+    const lockAlive = lock?.pid ? this.isProcessAlive(lock.pid) : false;
+    const activeJobIds = new Set<string>();
+
+    if (lock && lockAlive) {
+      activeJobIds.add(lock.jobId);
+    }
 
     const removed = await this.dockerBroker.cleanupOrphanedResources(activeJobIds);
     const total = removed.containers + removed.networks + removed.volumes;
     if (total > 0) {
-      console.log(
-        `[agent-runner] cleaned up orphaned docker resources: ${removed.containers} containers, ${removed.networks} networks, ${removed.volumes} volumes`,
+      process.stderr.write(
+        `[agent-runner] cleaned up orphaned docker resources: ${removed.containers} containers, ${removed.networks} networks, ${removed.volumes} volumes\n`,
       );
     }
   }
